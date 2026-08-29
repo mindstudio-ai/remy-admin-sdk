@@ -1,0 +1,61 @@
+{
+  "name": "@madewithremy/admin",
+  "version": "0.1.0",
+  "description": "Admin SDK + CLI for managing production Remy apps",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "remy-admin": "./dist/prod.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "lint:fix": "prettier --write ./src",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "keywords": [
+    "mindstudio",
+    "remy",
+    "admin",
+    "cli"
+  ],
+  "homepage": "https://mindstudio.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mindstudio-ai/remy-admin-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mindstudio-ai/remy-admin-sdk/issues"
+  },
+  "author": "MindStudio <support@mindstudio.ai> (https://mindstudio.ai)",
+  "license": "MIT",
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "json5": "^2.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.2",
+    "prettier": "^3.8.1",
+    "tsup": "^8",
+    "tsx": "^4",
+    "typescript": "^5.5"
+  }
+}
