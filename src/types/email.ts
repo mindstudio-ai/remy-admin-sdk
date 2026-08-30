@@ -7,7 +7,10 @@
  *   src/http/routes/V2Apps/manage/emailDomains.ts
  *   src/http/routes/V2Apps/manage/requestLog.ts (inbox route only)
  *   src/common/Db/v2Apps/V2EmailMessagesDao/index.ts
+ *   src/common/Db/v2Apps/V2EmailBatchesDao/index.ts
+ *   src/common/Db/v2Apps/V2EmailTenantStateDao/index.ts
  *   src/common/Db/v2Apps/AppEmailSuppressionsDao/index.ts
+ *   src/common/OutboundEmail/batchView.ts
  *   src/common/Aws/SesIdentityService.ts
  *   src/common/Db/v2Apps/RequestLogDao.ts
  */
@@ -79,7 +82,22 @@ export interface EmailSummary {
 }
 
 /**
- * One fan-out blast, aggregated (V2EmailMessagesDao.listBatches / getBatch).
+ * Lifecycle of a QUEUED send (batchView.ts / V2EmailBatchesDao). Large or
+ * marketing sends are accepted immediately and delivered by a worker in
+ * chunks, so a blast can legitimately be observed mid-flight.
+ *
+ *   accepted   queued, nothing delivered yet
+ *   sending    chunks are draining
+ *   completed  every recipient was handed to the provider
+ *   partial    finished, but some recipients were not sent to
+ *   failed     finished and nothing was sent
+ */
+export type EmailBatchLifecycle =
+  'accepted' | 'sending' | 'completed' | 'partial' | 'failed';
+
+/**
+ * One fan-out blast, aggregated (batchView.ts — the per-recipient aggregate
+ * enriched with the queued-send lifecycle where one exists).
  * `recipients` is every row in the blast including ones that never reached SES;
  * `accepted` is only those SES took and is the denominator for any rate.
  */
@@ -90,6 +108,17 @@ export interface EmailBatchSummary {
   recipients: number;
   accepted: number;
   counts: Record<EmailMessageStatus, number>;
+  /**
+   * Lifecycle of the send, when it was QUEUED. `null` for a send delivered
+   * inline (small transactional) and for blasts predating the send queue —
+   * that is a normal, finished send with no in-flight state, NOT an error.
+   */
+  status: EmailBatchLifecycle | null;
+  /** Delivery-chunk progress, when queued. Null otherwise. */
+  chunksTotal: number | null;
+  chunksDone: number | null;
+  /** Recipients not yet attempted, when queued. Null otherwise. */
+  pending: number | null;
 }
 
 /** One row from app_email_suppressions (AppEmailSuppressionsDao). */
@@ -245,11 +274,89 @@ export interface EmailSuppressResult {
   ok: true;
 }
 
-/** email unsuppress → POST /outbound-email/suppressions/remove */
+/**
+ * email unsuppress → POST /outbound-email/suppressions/remove
+ *
+ * Three independent outcomes, and only the tenant entry decides deliverability:
+ *   removed              this app's own suppression row is gone
+ *   tenantEntryRemoved   the app's SES TENANT suppression entry (a prior hard
+ *                        bounce or spam report against THIS app) is gone — this
+ *                        is what actually unblocks mail
+ *   platformSuppression  non-null = still on SES's ACCOUNT-wide list, which is
+ *                        never cleared; removal changed nothing about delivery
+ */
 export interface EmailUnsuppressResult {
   ok: true;
   removed: boolean;
+  tenantEntryRemoved: boolean;
   platformSuppression: PlatformSuppression | null;
+}
+
+// ---------------------------------------------------------------------------
+// Sending status (GET /outbound-email/status)
+// ---------------------------------------------------------------------------
+
+/**
+ * email status → GET /outbound-email/status
+ *
+ * Whether this app can send right now, and up to what. Two independent
+ * verdicts, deliberately not collapsed: `ses` is Amazon's view of the app's
+ * tenant and `enforcement` is the platform's own. The fields that decide what
+ * to tell the owner:
+ *
+ *   sending.source        'ses' = AMAZON paused it (we cannot lift it; it
+ *                         clears when the finding clears); 'platform' = we did
+ *   enforcement.origin    'operator' = a person placed the hold — it will NOT
+ *                         lift itself when rates recover; 'platform' = the
+ *                         automatic sweep, which steps down on its own
+ *   ses.status            'REINSTATED' still sends — it means "resuming with
+ *                         findings open" and returns to ENABLED on recovery
+ */
+export interface EmailSendingStatusResult {
+  sending: {
+    allowed: boolean;
+    reason: string | null;
+    source: 'ses' | 'platform' | null;
+  };
+  enforcement: {
+    level: 'none' | 'throttled' | 'paused';
+    origin: 'platform' | 'operator' | null;
+    reason: string | null;
+    at: string | null;
+  };
+  ses: {
+    status: 'ENABLED' | 'DISABLED' | 'REINSTATED' | null;
+    origin: 'CUSTOMER_MANAGED' | 'AWS_SES_MANAGED' | null;
+    cause: string | null;
+    at: string | null;
+  };
+  /**
+   * The enforcement sweep's last measurement, with its denominator — a rate
+   * without `accepted` is unreadable (1 bounce in 10 sends is "10%" and means
+   * nothing). All null until the sweep has evaluated this app.
+   */
+  evaluation: {
+    accepted: number | null;
+    bounceRate: number | null;
+    complaintRate: number | null;
+    at: string | null;
+  };
+  quota: {
+    unit: string;
+    window: 'day' | 'month' | 'total';
+    /** `null` = unlimited. */
+    limit: number | null;
+    used: number;
+    remaining: number | null;
+    resetsAt: string | null;
+    /**
+     * Where the limit came from: 'platform' is the default; 'app'/'org'/'plan'
+     * is an override — support-granted, or the sweep's automatic throttle.
+     */
+    source: 'app' | 'org' | 'plan' | 'platform';
+    /** When an override lapses and the limit reverts. */
+    expiresAt: string | null;
+  };
 }
 
 /** email inbox → GET /inbox */

@@ -16,6 +16,7 @@ import type {
   EmailInboxResult,
   EmailListResult,
   EmailMessageResult,
+  EmailSendingStatusResult,
   EmailStatsResult,
   EmailSuppressResult,
   EmailSuppressionsResult,
@@ -40,9 +41,10 @@ export interface EmailListParams {
   /**
    * Comma-separated statuses to include. Values: `suppressed`, `failed`,
    * `sent`, `delivered`, `blocked`, `bounced`, `complained`, `delayed`,
-   * `rejected`. Default: all statuses. `blocked` means the platform-wide SES
-   * suppression list dropped the message — usually from another tenant's hard
-   * bounce — not the app's own suppression list.
+   * `rejected`. Default: all statuses. `blocked` means an SES suppression list
+   * dropped the message before delivery — usually this app's OWN tenant list
+   * (a prior hard bounce or spam report from that address), occasionally the
+   * shared account-wide list. `unsuppress` reports which.
    */
   status?: string;
   /** Origin to filter by: `method` (app-sent) or `auth` (sign-in codes). Default: all. */
@@ -152,9 +154,10 @@ async function resolveDomainId(
  * The log covers every send attempt — suppressed, over-cap,
  * sender-not-allowed — because most real failures never touch the provider.
  * Status values: `suppressed` (app-level unsubscribe), `failed`, `sent`,
- * `delivered`, `blocked` (platform-wide SES suppression, usually another
- * tenant's hard bounce — not this app's list), `bounced`, `complained`,
- * `delayed`, `rejected`. Paginated via cursor in the result or by offset.
+ * `delivered`, `blocked` (dropped by an SES suppression list — usually this
+ * app's own tenant list after an earlier bounce or spam report from that
+ * address), `bounced`, `complained`, `delayed`, `rejected`. Paginated via
+ * cursor in the result or by offset.
  *
  * @example
  * const { messages } = await admin.email.list({ status: 'bounced,blocked', limit: 50 });
@@ -202,15 +205,53 @@ export function stats(ctx: AdminContext, params: EmailWindowParams = {}) {
 }
 
 /**
- * One row per blast/campaign with per-status counts.
+ * Whether this app can send email right now, and up to what — the first thing
+ * to check when "it's not sending emails".
+ *
+ * Reports four independent things: `sending` (the gate the send path itself
+ * uses, so this and a `409 sending_paused` can never disagree), `enforcement`
+ * (the platform's own throttle/pause and WHO applied it), `ses` (Amazon's view
+ * of the app's tenant), and `quota` (the daily recipient limit, usage, and
+ * where the limit came from).
+ *
+ * How to read a pause: `sending.source === 'ses'` means Amazon paused the
+ * tenant on its own findings — nothing the app owner does lifts it directly;
+ * it clears when the finding clears. `source === 'platform'` with
+ * `enforcement.origin === 'platform'` is the automatic bounce/complaint sweep
+ * and steps down on its own as rates recover; `origin === 'operator'` is a
+ * human hold and will not. A throttle shows up as `enforcement.level:
+ * 'throttled'` with the reduced `quota.limit` and its `expiresAt`.
+ *
+ * @example
+ * const s = await admin.email.status();
+ * if (!s.sending.allowed) console.log(s.sending.source, s.sending.reason);
+ * console.log(`${s.quota.used}/${s.quota.limit ?? '∞'} recipients today`);
+ */
+export function status(ctx: AdminContext) {
+  return call<EmailSendingStatusResult>(
+    ctx,
+    'GET',
+    `/_internal/v2/apps/${ctx.appId}/outbound-email/status`,
+  );
+}
+
+/**
+ * One row per blast/campaign with per-status counts and, for queued sends,
+ * the in-flight lifecycle.
  *
  * A marketing send delivers one message per recipient; many rows share a
  * `batchId` (set by the caller via `sendEmail`). `recipients` is the total
  * fan-out count including pre-SES failures; `accepted` is the SES-received
  * denominator used for rate calculations.
  *
+ * Large or marketing sends are accepted immediately and delivered in chunks —
+ * `status` (`accepted`/`sending`/`completed`/`partial`/`failed`), `chunksDone`/
+ * `chunksTotal` and `pending` report the progress. `status: null` is a normal,
+ * finished send delivered inline (or predating the queue), not an error.
+ *
  * @example
  * const { batches } = await admin.email.batches({ limit: 20 });
+ * const inFlight = batches.filter((b) => b.status === 'sending');
  */
 export function batches(ctx: AdminContext, params: EmailBatchesParams = {}) {
   return call<EmailBatchesResult>(
@@ -221,12 +262,14 @@ export function batches(ctx: AdminContext, params: EmailBatchesParams = {}) {
 }
 
 /**
- * Stats for a single blast identified by its batch id.
+ * Stats for a single blast identified by its batch id, including the queued
+ * lifecycle (`status`, chunk progress, `pending`) when the send was queued.
+ * A reused batch id reports its NEWEST run's lifecycle.
  *
  * @throws AdminApiError `not_found` (404) — no batch with that id on this app.
  * @example
  * const blast = await admin.email.batch('batch_xyz');
- * console.log(blast.recipients, blast.counts);
+ * console.log(blast.status, blast.pending, blast.counts);
  */
 export function batch(ctx: AdminContext, batchId: string) {
   return call<EmailBatchResult>(
@@ -270,19 +313,25 @@ export function suppress(ctx: AdminContext, email: string) {
 }
 
 /**
- * Remove an address from the app-level suppression list.
+ * Remove an address from this app's suppression lists — the app-level
+ * unsubscribe row AND the app's SES tenant suppression entry (a prior hard
+ * bounce or spam report against this app), which is the one that actually
+ * unblocks delivery.
  *
  * No `confirm` parameter here — the op is the deliberate act. The CLI skin
  * keeps the `--confirm` gate before calling this.
  *
- * The returned `platformSuppression` field (non-null) means the address is
- * also on the platform-wide SES list and will remain undeliverable even after
- * this removal. The CLI skin surfaces that advisory on stderr.
+ * Read the result, not just `ok`: `tenantEntryRemoved` true means a
+ * provider-side bounce record was cleared and mail will be attempted again
+ * (another bounce re-suppresses automatically); `platformSuppression` non-null
+ * means the address is on SES's ACCOUNT-wide list — never cleared, shared by
+ * every app — and this removal changed nothing about deliverability. The CLI
+ * skin surfaces both advisories on stderr.
  *
  * @throws AdminApiError `invalid_email` (400) — the address is not a valid email.
  * @example
- * const { platformSuppression } = await admin.email.unsuppress('user@example.com');
- * if (platformSuppression) console.warn('Address is still on the platform SES list.');
+ * const result = await admin.email.unsuppress('user@example.com');
+ * if (result.platformSuppression) console.warn('Still blocked account-wide.');
  */
 export function unsuppress(ctx: AdminContext, email: string) {
   return call<EmailUnsuppressResult>(

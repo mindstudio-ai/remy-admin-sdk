@@ -50,6 +50,9 @@ export const emailSpecs = {
       'Usage: remy-admin email stats [--start <ISO date>] [--end <ISO date>]',
     flags: { ...WINDOW },
   },
+  'email status': {
+    usage: 'Usage: remy-admin email status',
+  },
   'email batches': {
     usage:
       'Usage: remy-admin email batches [--start <ISO date>] [--end <ISO date>] [--limit 50]',
@@ -147,6 +150,10 @@ async function emailStats(ctx: AdminContext, a: Args) {
   out(await email.stats(ctx, { start: a.str('start'), end: a.str('end') }));
 }
 
+async function emailStatus(ctx: AdminContext) {
+  out(await email.status(ctx));
+}
+
 async function emailBatches(ctx: AdminContext, a: Args) {
   out(
     await email.batches(ctx, {
@@ -184,11 +191,13 @@ async function emailSuppress(ctx: AdminContext, a: Args) {
  * because the agent runs this command too, and an automated opt-out reversal
  * should be a deliberate act rather than a side effect.
  *
- * The response carries `platformSuppression`. Non-null means the address is ALSO
- * on SES's account-level list after a hard bounce or complaint, which we never
- * clear (that list is account-wide, so re-sending spends sending reputation
- * shared by every tenant). Removing our row does not make that address
- * deliverable, so say so rather than printing a bare success.
+ * The removal clears the app's own row AND its SES tenant suppression entry (a
+ * prior hard bounce or spam report against this app) — the tenant entry is the
+ * one that actually unblocks delivery, so `tenantEntryRemoved` gets its own
+ * advisory. `platformSuppression` non-null means the address is ALSO on SES's
+ * account-level list, which we never clear (it is account-wide, so re-sending
+ * spends sending reputation shared by every tenant) — removal then changed
+ * nothing about deliverability, and printing a bare success would be a lie.
  */
 async function emailUnsuppress(ctx: AdminContext, a: Args) {
   if (!a.bool('confirm')) {
@@ -202,8 +211,14 @@ async function emailUnsuppress(ctx: AdminContext, a: Args) {
     const { reason, at } = result.platformSuppression;
     console.error(
       `\nNote: removed from this app's list, but ${a.req('email')} is still on the ` +
-        `platform suppression list (${reason}${at ? ` since ${at}` : ''}). ` +
-        `Mail to it will still be blocked — that list is account-wide and is not cleared.`,
+        `ACCOUNT-wide suppression list (${reason}${at ? ` since ${at}` : ''}). ` +
+        `Mail to it will still be blocked — that list is shared by every app and is not cleared.`,
+    );
+  } else if (result?.tenantEntryRemoved) {
+    console.error(
+      `\nNote: also cleared this app's provider-side bounce/complaint record for ` +
+        `${a.req('email')}. Mail will be attempted again — another hard bounce ` +
+        `re-suppresses it automatically.`,
     );
   }
 }
@@ -256,6 +271,7 @@ export const emailHandlers = {
   'email list': emailList,
   'email get': emailGet,
   'email stats': emailStats,
+  'email status': emailStatus,
   'email batches': emailBatches,
   'email batch': emailBatch,
   'email suppressions': emailSuppressions,
@@ -280,7 +296,8 @@ Subcommands:
   list           List sent messages (includes mail that never reached the provider)
   get            Full detail for one message, including bounce diagnostics
   stats          Counts and rates over a window
-  batches        One row per blast, with per-status counts
+  status         Can this app send right now? Pause/throttle state + daily quota
+  batches        One row per blast, with per-status counts and delivery progress
   batch          Stats for a single blast
   suppressions   This app's unsubscribe list
   suppress       Add an address to the unsubscribe list
@@ -292,15 +309,26 @@ Subcommands:
 
 Notes:
   Statuses: suppressed, failed, sent, delivered, blocked, bounced, complained,
-  delayed, rejected. "blocked" means the platform-wide suppression list dropped
-  it — usually another tenant's hard bounce — not that this address is bad.
+  delayed, rejected. "blocked" means an SES suppression list dropped it before
+  delivery — usually this app's OWN list, after an earlier hard bounce or spam
+  report from that address ('unsuppress' clears it and says which list it was).
+
+  'status' is the first check when sends are failing or a send returns
+  409 sending_paused. sending.source 'ses' = Amazon paused the tenant (clears
+  when the finding clears; nothing lifts it directly); 'platform' = our
+  bounce/complaint enforcement — enforcement.origin 'platform' steps down on
+  its own as rates recover, 'operator' is a human hold and will not. A reduced
+  quota.limit with an expiresAt is an automatic throttle.
 
   --recipient is an exact match and is index-backed; use --search for partials
   (bounded, and not paginated).
 
   A marketing send delivers one message per recipient, so a campaign is many
   rows sharing a batch id. Pass batchId to sendEmail to group them under your own
-  campaign id.
+  campaign id. Large and marketing sends are QUEUED: accepted immediately,
+  delivered in chunks — a batch's status (accepted|sending|completed|partial|
+  failed), chunksDone/chunksTotal and pending report the progress. status null
+  is a normal send that delivered inline, not an error.
 
   An inbox row's id is its request-log id: open the full detail (parsed message,
   method run, errors) with 'requests get <id>'.
@@ -323,6 +351,8 @@ Custom domains — two independent directions:
   the records and 'verify' again).
 
 Examples:
+  remy-admin email status
+  remy-admin email list --status bounced,blocked --limit 50
   remy-admin email domains add mail.acme.com
   remy-admin email domains verify mail.acme.com
   remy-admin email inbound-domains check acme.com
