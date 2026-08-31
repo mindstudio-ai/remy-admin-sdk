@@ -4,6 +4,7 @@
  * from the package root so importing callers get the full typed surface.
  */
 
+export * from './agent.js';
 export * from './analytics.js';
 export * from './crashes.js';
 export * from './cron.js';

@@ -30,6 +30,7 @@ Commands:
   files       Store, retrieve, share (signed links) + manage files in the app's stores
   datasources Build and query searchable document corpora (RAG)
   voice       Phone numbers, voice call log + transcripts, voice policy settings
+  agent       Agent (chat) conversation log + transcripts
   jewels      Monitor jewel shadowing; review + approve the proposal queue
   settings    App settings — signup allowlist, test accounts, embed origins, toggles
   email       Email — delivery log, blast stats, unsubscribes, inbox, custom domains
@@ -61,6 +62,7 @@ const GROUPS = [
   'files',
   'datasources',
   'voice',
+  'agent',
   'jewels',
   'settings',
   'email',

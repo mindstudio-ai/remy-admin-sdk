@@ -15,6 +15,7 @@ import {
   type AdminContext,
 } from './ctx.js';
 
+import * as agent from './ops/agent.js';
 import * as analytics from './ops/analytics.js';
 import * as crashes from './ops/crashes.js';
 import * as cron from './ops/cron.js';
@@ -97,6 +98,7 @@ function buildClient(ctx: AdminContext) {
       return buildClient({ ...ctx, appId });
     },
 
+    agent: bindOps(agent, ctx),
     analytics: bindOps(analytics, ctx),
     crashes: bindOps(crashes, ctx),
     cron: bindOps(cron, ctx),

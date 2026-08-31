@@ -38,6 +38,7 @@ import {
   dataSourcesSpecs,
 } from './dataSources.js';
 import { voiceHandlers, voiceHelp, voiceSpecs } from './voice.js';
+import { agentHandlers, agentHelp, agentSpecs } from './agent.js';
 import { jewelsHandlers, jewelsHelp, jewelsSpecs } from './jewels.js';
 import { settingsHandlers, settingsHelp, settingsSpecs } from './settings.js';
 import { emailHandlers, emailHelp, emailSpecs } from './email.js';
@@ -60,6 +61,7 @@ export const SPECS = {
   ...filesSpecs,
   ...dataSourcesSpecs,
   ...voiceSpecs,
+  ...agentSpecs,
   ...jewelsSpecs,
   ...settingsSpecs,
   ...emailSpecs,
@@ -85,6 +87,7 @@ export const HANDLERS = {
   ...filesHandlers,
   ...dataSourcesHandlers,
   ...voiceHandlers,
+  ...agentHandlers,
   ...jewelsHandlers,
   ...settingsHandlers,
   ...emailHandlers,
@@ -117,6 +120,7 @@ export const GROUP_HELP: Record<string, string> = {
   files: filesHelp,
   datasources: dataSourcesHelp,
   voice: voiceHelp,
+  agent: agentHelp,
   jewels: jewelsHelp,
   settings: settingsHelp,
   email: emailHelp,
