@@ -40,6 +40,7 @@ const CONFIG_FLAGS = {
   'min-chars': { type: 'number', min: 0 },
   'drop-blocks': { type: 'string' },
   contextual: { type: 'string' },
+  'contextual-model': { type: 'string' },
   'describe-images': { type: 'string' },
   'embedding-model': { type: 'string' },
   'image-model': { type: 'string' },
@@ -404,7 +405,15 @@ function configFromFlags(a: Args): {
       .filter(Boolean);
   }
 
-  const contextual = triState(a, 'contextual', 'enabled');
+  // Same two-facet shape as `images` and `rerank`: enabling without a model is
+  // fine — the server fills its default chat model rather than leaving the
+  // setting inert.
+  const contextual = {
+    ...triState(a, 'contextual', 'enabled'),
+    ...(a.str('contextual-model')
+      ? { modelId: a.str('contextual-model') }
+      : {}),
+  };
   // `describe` and `modelId` are two facets of one `images` object, same shape
   // as `rerank` below. These flags were accepted and silently DROPPED for a
   // while — the exact failure mode the strict arg parser exists to prevent,
@@ -614,7 +623,10 @@ Search options:
                            coerce: true/false and numbers become typed.
                            Pass a JSON object for the full grammar:
                            metadata, filename, documentIds, pages, contains,
-                           phrase — e.g. --filter '{"pages":{"max":3}}'
+                           phrase — e.g. --filter '{"pages":{"max":3}}'.
+                           Metadata takes numeric ranges via {gte,lte}: store
+                           dates as integers (YYYYMMDD or epoch seconds), then
+                           --filter '{"metadata":{"date":{"gte":20250101}}}'
   --phrase <text>          Chunk must contain this exact word sequence
   --contains <words>       Chunk must contain ALL these words, any order
   --max-per-document <n>   Cap hits per document; backfills from others
@@ -644,6 +656,8 @@ Tuning a corpus:
     --contextual <true|false>  LLM context blurb per chunk. Improves retrieval
                              on long documents; costs a model call per chunk
                              at ingest. Off by default — measure on your data.
+    --contextual-model <id>  Which chat model writes the blurbs. Optional:
+                             enabling without it uses the platform default.
     --describe-images <true|false>  Vision pass over images inside documents,
                              substituting a description into the searchable
                              text. ON by default: a document with no images

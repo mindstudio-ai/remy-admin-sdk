@@ -55,7 +55,7 @@ export interface DataSourcesIngestUpdate {
     minChars?: number;
     dropBlockTypes?: string[];
   };
-  contextual?: { enabled?: boolean };
+  contextual?: { enabled?: boolean; modelId?: string };
   images?: { describe?: boolean; modelId?: string };
   embedding?: { modelId: string };
   extraction?: { modelId: string };
