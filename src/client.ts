@@ -17,6 +17,7 @@ import {
 
 import * as agent from './ops/agent.js';
 import * as analytics from './ops/analytics.js';
+import * as appEvents from './ops/events.js';
 import * as crashes from './ops/crashes.js';
 import * as cron from './ops/cron.js';
 import * as data from './ops/data.js';
@@ -100,6 +101,7 @@ function buildClient(ctx: AdminContext) {
 
     agent: bindOps(agent, ctx),
     analytics: bindOps(analytics, ctx),
+    events: bindOps(appEvents, ctx),
     crashes: bindOps(crashes, ctx),
     cron: bindOps(cron, ctx),
     data: bindOps(data, ctx),

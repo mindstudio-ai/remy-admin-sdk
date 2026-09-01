@@ -39,6 +39,7 @@ import {
 } from './dataSources.js';
 import { voiceHandlers, voiceHelp, voiceSpecs } from './voice.js';
 import { agentHandlers, agentHelp, agentSpecs } from './agent.js';
+import { eventsHandlers, eventsHelp, eventsSpecs } from './events.js';
 import { jewelsHandlers, jewelsHelp, jewelsSpecs } from './jewels.js';
 import { settingsHandlers, settingsHelp, settingsSpecs } from './settings.js';
 import { emailHandlers, emailHelp, emailSpecs } from './email.js';
@@ -62,6 +63,7 @@ export const SPECS = {
   ...dataSourcesSpecs,
   ...voiceSpecs,
   ...agentSpecs,
+  ...eventsSpecs,
   ...jewelsSpecs,
   ...settingsSpecs,
   ...emailSpecs,
@@ -88,6 +90,7 @@ export const HANDLERS = {
   ...dataSourcesHandlers,
   ...voiceHandlers,
   ...agentHandlers,
+  ...eventsHandlers,
   ...jewelsHandlers,
   ...settingsHandlers,
   ...emailHandlers,
@@ -121,6 +124,7 @@ export const GROUP_HELP: Record<string, string> = {
   datasources: dataSourcesHelp,
   voice: voiceHelp,
   agent: agentHelp,
+  events: eventsHelp,
   jewels: jewelsHelp,
   settings: settingsHelp,
   email: emailHelp,

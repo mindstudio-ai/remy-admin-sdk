@@ -1,5 +1,5 @@
 /**
- * CLI-only streaming passthroughs. Both write directly to stdout, which is
+ * CLI-only streaming passthroughs. All write directly to stdout, which is
  * why they live beside output.ts rather than in the ops core: they are output
  * devices for a terminal, not API calls with a return value. The importable
  * client deliberately does not expose them (SDK v1 is non-streaming).
@@ -130,6 +130,99 @@ export async function streamToStdout(
     if (idled || err?.name === 'AbortError') {
       fatal(
         `Stream POST ${apiPath} stalled — no data for ${STREAM_IDLE_TIMEOUT_MS / 1000}s`,
+      );
+    }
+    throw err;
+  } finally {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+    }
+  }
+}
+
+/**
+ * GET SSE tail: each `data:` frame prints as one JSON value until the server
+ * ends the stream. The server bounds the tail itself (`forSeconds`, then a
+ * `tail_complete` frame) — that terminal marker is transport, not data, so it
+ * is swallowed rather than printed. Keepalive comments count as bytes, so a
+ * quiet-but-alive tail survives the idle timer.
+ */
+export async function tailSseToStdout(
+  ctx: AdminContext,
+  apiPath: string,
+): Promise<void> {
+  const controller = new AbortController();
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let idled = false;
+  const armIdleTimer = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+    }
+    idleTimer = setTimeout(() => {
+      idled = true;
+      controller.abort();
+    }, STREAM_IDLE_TIMEOUT_MS);
+  };
+
+  let complete = false;
+  try {
+    armIdleTimer();
+    const res = await fetch(`${ctx.baseUrl}${apiPath}`, {
+      method: 'GET',
+      headers: { ...authHeaders(ctx), Accept: 'text/event-stream' },
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      fatal(
+        `API GET ${apiPath} returned ${res.status}: ${JSON.stringify(await readBody(res))}`,
+      );
+    }
+    if (!res.body) {
+      fatal('Tail response has no body');
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const emit = (line: string) => {
+      if (!line.startsWith('data: ')) {
+        return;
+      }
+      try {
+        const value = JSON.parse(line.slice(6));
+        if (value?.type === 'tail_complete') {
+          complete = true;
+          return;
+        }
+        out(value);
+      } catch {
+        // skip unparseable SSE lines
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        emit(buffer);
+        break;
+      }
+      armIdleTimer();
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop()!;
+      for (const line of lines) {
+        emit(line);
+      }
+    }
+  } catch (err: any) {
+    if (complete) {
+      return; // server ended the bounded tail; a teardown race is not an error
+    }
+    if (idled || err?.name === 'AbortError') {
+      fatal(
+        `Tail GET ${apiPath} stalled — no data for ${STREAM_IDLE_TIMEOUT_MS / 1000}s`,
       );
     }
     throw err;

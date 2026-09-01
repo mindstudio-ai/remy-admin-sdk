@@ -14,6 +14,7 @@ export * from './db.js';
 export * from './diagnostics.js';
 export * from './domains.js';
 export * from './email.js';
+export * from './events.js';
 export * from './files.js';
 export * from './issues.js';
 export * from './jewels.js';
