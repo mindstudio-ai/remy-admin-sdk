@@ -34,11 +34,23 @@ export interface EventsPublishResult {
    * error.
    */
   delivered: number;
+  /**
+   * The platform-stamped publish id — the same id arrives on every delivered
+   * frame, so it correlates a test publish with `events tail` output.
+   */
+  id: string;
   scope: string;
 }
 
-/** One frame printed by `events tail` (also the subscribe stream's shape). */
+/**
+ * One frame printed by `events tail` (also the subscribe stream's shape).
+ * A slow reader may also see `{ type: 'events_dropped', count, ts }` — the
+ * platform drops rather than buffers when a consumer falls behind, and says
+ * how many frames it dropped once the stream drains.
+ */
 export interface EventsTailFrame {
+  /** Platform-stamped publish id (consumer dedupe key: `id` + `channel`). */
+  id: string;
   channel: string;
   data: unknown;
   /** Publish time, ms since epoch. */

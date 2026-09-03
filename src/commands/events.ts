@@ -110,10 +110,12 @@ Examples:
   remy-admin events channels list
 
 Notes:
-  tail answers "is my backend publishing what I think it is": run it in one
-  shell, trigger the publishing method in another, and each matching publish
-  prints as one JSON value ({channel, data, ts}). It ends on its own after
-  --for seconds (exit 0), so it is safe to run from a script.
+  tail answers "is my code publishing what I think it is": run it in one
+  shell, trigger the publish in another, and each matching publish prints as
+  one JSON value ({id, channel, data, ts}). Every publish appears regardless
+  of origin — a backend method, this CLI, or a client with a publish-capable
+  grant. It ends on its own after --for seconds (exit 0), so it is safe to
+  run from a script.
 
   publish lets a frontend subscriber be verified before the backend trigger
   exists. The response's 'delivered' counts live subscriber connections per
