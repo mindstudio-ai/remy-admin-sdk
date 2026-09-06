@@ -161,6 +161,18 @@ export interface DataSourcesBuildProgress {
   error: number;
 }
 
+/**
+ * Where a source's index lives. Null is the shared pool. `phase` is the
+ * resource's lifecycle phase (see types/infra.ts); anything but `active` means
+ * searches on this source fail with `capacity_<phase>`.
+ */
+export interface DataSourcesPlacement {
+  resourceId: string;
+  name: string | null;
+  offeringLabel: string | null;
+  phase: string;
+}
+
 /** One data source in the GET /datasources listing. */
 export interface DataSourcesListEntry {
   id: string;
@@ -179,6 +191,8 @@ export interface DataSourcesListEntry {
   dimensions: number | null;
   /** Present while a revectorization is in flight. */
   candidate: { version: number; progress: DataSourcesBuildProgress } | null;
+  /** Dedicated placement, or null for the shared pool. */
+  placement: DataSourcesPlacement | null;
   createdAt: string;
 }
 
@@ -262,8 +276,10 @@ export interface DataSourcesConfigResult {
 /** POST /datasources/config — response after updating configuration. */
 export interface DataSourcesConfigUpdateResult {
   ingestChanged: boolean;
+  placementChanged: boolean;
   ingest: DataSourcesIngestConfig;
   retrieval: Partial<DataSourcesRetrievalConfig>;
+  placement: DataSourcesPlacement | null;
 }
 
 /**

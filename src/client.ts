@@ -27,6 +27,7 @@ import * as diagnostics from './ops/diagnostics.js';
 import * as domains from './ops/domains.js';
 import * as email from './ops/email.js';
 import * as files from './ops/files.js';
+import * as infra from './ops/infra.js';
 import * as issues from './ops/issues.js';
 import * as jewels from './ops/jewels.js';
 import * as methods from './ops/methods.js';
@@ -134,6 +135,7 @@ function buildClient(ctx: AdminContext) {
       ) => email.removeDomain(ctx, direction, domain),
     },
     files: bindOps(files, ctx),
+    infra: bindOps(infra, ctx),
     issues: bindOps(issues, ctx),
     jewels: bindOps(jewels, ctx),
     methods: bindOps(methods, ctx),

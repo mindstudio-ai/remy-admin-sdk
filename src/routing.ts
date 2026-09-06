@@ -69,6 +69,7 @@ const GROUPS = [
   'settings',
   'email',
   'cron',
+  'infra',
 ] as const;
 
 type Route = { key: CommandKey; argv: string[] };

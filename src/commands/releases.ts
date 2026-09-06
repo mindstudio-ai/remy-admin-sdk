@@ -239,6 +239,12 @@ the exit code so you can branch on $? without parsing:
 Any other failure (bad arguments, auth, API error) exits 10, so exit 1 always
 means the build itself failed.
 
+Every release shape ('get', 'list', 'status', 'wait') carries why a failed
+build failed: 'failureReason' (message), 'failurePhase' (the stage that was
+running), and 'failureKind' — 'build' (the code), 'unbuildable' (commit is
+not a readable app), or 'interrupted' (a platform restart killed the build;
+a retry is already running, so don't re-push).
+
 Examples:
   git push origin HEAD && remy-admin releases wait
   remy-admin releases wait --commit 91ca67a --timeout 600

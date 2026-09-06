@@ -386,6 +386,13 @@ export interface ConfigSetParams {
    * required.
    */
   retrieval?: DataSourcesRetrievalUpdate;
+  /**
+   * Where the corpus lives: a dedicated resource (see `admin.infra`) or the
+   * shared pool. Accepted only while the source has no built documents —
+   * moving a populated source is refused with
+   * `placement_change_requires_migration`.
+   */
+  placement?: { resourceId: string } | 'shared';
 }
 
 /**
@@ -404,7 +411,7 @@ export interface ConfigSetParams {
  * });
  */
 export function configSet(ctx: AdminContext, params: ConfigSetParams) {
-  const { slug, ingest, retrieval } = params;
+  const { slug, ingest, retrieval, placement } = params;
   return call<DataSourcesConfigUpdateResult>(
     ctx,
     'POST',
@@ -413,6 +420,7 @@ export function configSet(ctx: AdminContext, params: ConfigSetParams) {
       slug,
       ...(ingest ? { ingest } : {}),
       ...(retrieval ? { retrieval } : {}),
+      ...(placement !== undefined ? { placement } : {}),
     },
   );
 }

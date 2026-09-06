@@ -98,8 +98,14 @@ export const dataSourcesSpecs = {
   },
   'datasources config': {
     usage:
-      'Usage: remy-admin datasources config [--source <slug>] [settings...]',
-    flags: { source: { type: 'string' }, ...CONFIG_FLAGS },
+      'Usage: remy-admin datasources config [--source <slug>] [--placement <resource-id|shared>] [settings...]',
+    flags: {
+      source: { type: 'string' },
+      // Where the corpus lives: a dedicated resource id from `infra list`, or
+      // `shared`. Only changeable while the source has nothing built.
+      placement: { type: 'string' },
+      ...CONFIG_FLAGS,
+    },
   },
   'datasources revectorize': {
     usage:
@@ -469,8 +475,15 @@ function configFromFlags(a: Args): {
 async function dataSourcesConfig(ctx: AdminContext, a: Args) {
   const slug = sourceOf(a);
   const { ingest, retrieval } = configFromFlags(a);
+  const placementFlag = a.str('placement');
+  const placement =
+    placementFlag === undefined
+      ? undefined
+      : placementFlag === 'shared'
+        ? ('shared' as const)
+        : { resourceId: placementFlag };
 
-  if (!ingest && !retrieval) {
+  if (!ingest && !retrieval && placement === undefined) {
     out(await dataSources.configGet(ctx, slug));
     return;
   }
@@ -480,6 +493,7 @@ async function dataSourcesConfig(ctx: AdminContext, a: Args) {
       slug,
       ...(ingest ? { ingest } : {}),
       ...(retrieval ? { retrieval } : {}),
+      ...(placement !== undefined ? { placement } : {}),
     }),
   );
 }

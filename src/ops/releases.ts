@@ -110,12 +110,8 @@ export async function dashboardLive(
 // ---- waitForCommit internals ----
 
 /**
- * Why a failed build failed.
- *
- * There is no `error` column on a release — when the API marks one failed it
- * appends a build-log entry with phase 'error' carrying the message. The
- * by-commit endpoint returns the plain release row, buildLog included, so the
- * reason is already in hand here.
+ * Why a failed build failed — fallback for an API that predates the derived
+ * `failureReason` field: read the last `error`-phase build-log entry.
  */
 function buildFailureReason(release: ReleasesByCommitResult): string | null {
   const log: V2BuildLogEntry[] = Array.isArray(release.buildLog)
@@ -143,8 +139,16 @@ export interface ReleaseSummary {
   buildDurationMs: number | null;
   publishedAt: string | null;
   previewUrl?: string;
-  /** Build failure reason from the last build-log `error` phase entry; only present when status is `failed`. */
+  /** Why it failed; only present when status is `failed`. */
   error?: string;
+  /**
+   * Only present when status is `failed`. 'interrupted' means a platform
+   * restart killed the build and a retry is already running — not a code
+   * problem. See ReleaseFailureFields.
+   */
+  failureKind?: 'build' | 'interrupted' | 'unbuildable';
+  /** Build stage that was running when it failed; only when `failed`. */
+  failurePhase?: string;
 }
 
 function summarizeRelease(release: ReleasesByCommitResult): ReleaseSummary {
@@ -163,8 +167,11 @@ function summarizeRelease(release: ReleasesByCommitResult): ReleaseSummary {
   return {
     ...summary,
     error:
+      release.failureReason ??
       buildFailureReason(release) ??
       'Build failed (no error entry in the build log)',
+    ...(release.failureKind ? { failureKind: release.failureKind } : {}),
+    ...(release.failurePhase ? { failurePhase: release.failurePhase } : {}),
   };
 }
 

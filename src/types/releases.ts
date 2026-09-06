@@ -40,11 +40,30 @@ export type V2ReleaseStatus =
   | 'superseded';
 
 /**
+ * Why a failed release failed — derived server-side from the build log
+ * (describeReleaseFailure() in youai-api) and present on every release
+ * shape. All three are null unless `status` is 'failed'.
+ *
+ * `failureKind` is the field to branch on:
+ *   'interrupted' — the build's orchestrator died (platform restart); the
+ *                   platform retries once automatically. Transient.
+ *   'unbuildable' — the commit couldn't be read as an app (mindstudio.json
+ *                   missing/invalid). Fix the commit; nothing to retry.
+ *   'build'       — the build itself failed (compile error, deploy step).
+ */
+export interface ReleaseFailureFields {
+  failureReason: string | null;
+  /** Build stage that was running when it failed (`interfaces`, `promote`…). */
+  failurePhase: string | null;
+  failureKind: 'build' | 'interrupted' | 'unbuildable' | null;
+}
+
+/**
  * Lightweight release projection returned by the paginated list endpoint.
  * Heavy fields (buildLog, manifest, methods, interfaces) are dropped.
  * Produced by toReleaseFragment() in youai-api.
  */
-export interface ReleaseFragment {
+export interface ReleaseFragment extends ReleaseFailureFields {
   id: string;
   commitSha: string;
   commitInfo: V2CommitInfo;
@@ -74,7 +93,7 @@ export interface ReleasesListResult {
  * Includes build log, databases, signed diff/diagnostics URLs, and the
  * post-deploy async progress signal.
  */
-export interface ReleasesGetResult {
+export interface ReleasesGetResult extends ReleaseFailureFields {
   id: string;
   appId: string;
   commitSha: string;
@@ -119,7 +138,7 @@ export interface ReleasesGetResult {
  * Plain release row — no databases/diff enrichment — plus previewUrl.
  * Used by 'releases wait', which polls this endpoint in a loop.
  */
-export interface ReleasesByCommitResult {
+export interface ReleasesByCommitResult extends ReleaseFailureFields {
   id: string;
   appId: string;
   commitSha: string;
