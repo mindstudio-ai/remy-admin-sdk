@@ -64,9 +64,15 @@ export interface InfraResource {
   health: InfraHealth | null;
   /**
    * What the instance is doing right now, while a transition is under way
-   * ("Waiting for capacity", "Snapshotting ds_x (1/2)"); null when nothing is.
+   * ("Waiting for capacity", "Snapshotting collection 1/2"); null when nothing is.
    */
   detail: string | null;
+  /**
+   * The size this resource is being resized to, while a resize is under way;
+   * null otherwise. A resize passes through `hibernated` and back to the phase
+   * it started from.
+   */
+  resizingTo: InfraOffering | null;
   /** When the last verified snapshot was taken; null if never. */
   lastSnapshotAt: string | null;
   activatedAt: string | null;
@@ -102,7 +108,7 @@ export interface InfraGetResult {
   attachedSources: { id: string; slug: string; name: string | null }[];
 }
 
-/** POST /infra, /infra/:id/{hibernate,resume,destroy,rename} */
+/** POST /infra, /infra/:id/{hibernate,resume,destroy,rename,resize} */
 export interface InfraResourceResult {
   resource: InfraResource;
 }

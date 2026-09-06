@@ -125,9 +125,24 @@ export const dataSourcesSpecs = {
     flags: {
       source: { type: 'string' },
       // Where the corpus lives: a dedicated resource id from `infra list`, or
-      // `shared`. Only changeable while the source has nothing built.
+      // `shared`. A populated source starts a background move (see `move`).
       placement: { type: 'string' },
       ...CONFIG_FLAGS,
+    },
+  },
+  'datasources move': {
+    usage:
+      'Usage: remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--wait] [--timeout <sec>]',
+    flags: {
+      source: { type: 'string' },
+      to: { type: 'string' },
+      wait: { type: 'boolean' },
+      timeout: { type: 'string' },
+    },
+    requireAnyOf: {
+      flags: ['to'],
+      message:
+        '--to is required: a resource id from `infra list`, or `shared`.',
     },
   },
   'datasources revectorize': {
@@ -519,11 +534,15 @@ const placementOf = (a: Args) => {
       : { resourceId: flag };
 };
 
+/** The follow-up a response that started a background move deserves. */
+const MOVE_NOTE =
+  'Moving in the background; `datasources list` shows progress, or re-run with `datasources move --wait`.';
+
 /**
  * Create an empty source, optionally on dedicated capacity. `add` creates a
- * source on first use too, but on the shared pool, and a populated source
- * cannot move — so a corpus meant for a resource starts here. An explicit
- * --source, like `delete`: creating "default" by accident helps nobody.
+ * source on first use too, but on the shared pool — so a corpus meant for a
+ * resource starts here (or moves later with `move`). An explicit --source,
+ * like `delete`: creating "default" by accident helps nobody.
  */
 async function dataSourcesCreate(ctx: AdminContext, a: Args) {
   const slug = a.str('source');
@@ -533,13 +552,16 @@ async function dataSourcesCreate(ctx: AdminContext, a: Args) {
   const { ingest } = configFromFlags(a);
   const name = a.str('name');
   const placement = placementOf(a);
+  const result = await dataSources.create(ctx, {
+    slug,
+    ...(name ? { name } : {}),
+    ...(ingest ? { ingest } : {}),
+    ...(placement !== undefined ? { placement } : {}),
+  });
   out(
-    await dataSources.create(ctx, {
-      slug,
-      ...(name ? { name } : {}),
-      ...(ingest ? { ingest } : {}),
-      ...(placement !== undefined ? { placement } : {}),
-    }),
+    result.migration && !result.migration.error
+      ? { ...result, note: MOVE_NOTE }
+      : result,
   );
 }
 
@@ -554,14 +576,58 @@ async function dataSourcesConfig(ctx: AdminContext, a: Args) {
     return;
   }
 
+  const result = await dataSources.configSet(ctx, {
+    slug,
+    ...(ingest ? { ingest } : {}),
+    ...(retrieval ? { retrieval } : {}),
+    ...(placement !== undefined ? { placement } : {}),
+  });
   out(
-    await dataSources.configSet(ctx, {
-      slug,
-      ...(ingest ? { ingest } : {}),
-      ...(retrieval ? { retrieval } : {}),
-      ...(placement !== undefined ? { placement } : {}),
-    }),
+    result.placementChanged && result.migration && !result.migration.error
+      ? { ...result, note: MOVE_NOTE }
+      : result,
   );
+}
+
+/**
+ * Move a source between placements. Instant while empty; a populated source
+ * is copied onto the target in the background from its stored vectors, and
+ * --wait blocks until it lands. Exit codes follow `add --wait`.
+ */
+async function dataSourcesMove(ctx: AdminContext, a: Args) {
+  const slug = sourceOf(a);
+  const to = a.str('to') as string;
+  const placement = to === 'shared' ? ('shared' as const) : { resourceId: to };
+
+  const started = await dataSources.move(ctx, { slug, placement });
+  if (!started.migration || !a.bool('wait')) {
+    out({
+      dataSource: slug,
+      ...started,
+      ...(started.migration ? { note: MOVE_NOTE } : {}),
+    });
+    return;
+  }
+
+  const timeoutSec = a.num('timeout');
+  const result = await dataSources.waitForMove(ctx, {
+    slug,
+    ...(timeoutSec ? { timeoutMs: timeoutSec * 1000 } : {}),
+    onProgress: progress,
+  });
+  out({
+    dataSource: slug,
+    status: result.status,
+    placement: result.source.placement,
+    migration: result.source.migration,
+    ...('error' in result ? { error: result.error } : {}),
+  });
+  if (result.status === 'failed') {
+    process.exit(EXIT.buildFailed);
+  }
+  if (result.status === 'timeout') {
+    process.exit(EXIT.timeout);
+  }
 }
 
 /**
@@ -660,6 +726,7 @@ export const dataSourcesHandlers = {
   'datasources search': dataSourcesSearch,
   'datasources create': dataSourcesCreate,
   'datasources config': dataSourcesConfig,
+  'datasources move': dataSourcesMove,
   'datasources revectorize': dataSourcesRevectorize,
   'datasources promote': dataSourcesPromote,
   'datasources drop': dataSourcesDrop,
@@ -679,6 +746,7 @@ Subcommands:
   search       Query a corpus — useful to sanity-check one you just built
   create       Create an empty source, optionally on dedicated capacity
   config       Show or change how a corpus is processed and searched
+  move         Move a corpus between shared and dedicated capacity, data intact
   revectorize  Rebuild a corpus under new settings, alongside the live one
   promote      Make a rebuilt version live
   drop         Discard a candidate or a superseded version
@@ -692,6 +760,7 @@ Usage:
   remy-admin datasources search [--source <slug>] [search options] <query>
   remy-admin datasources create --source <slug> [--name <name>] [--placement <resource-id|shared>] [rebuild settings...]
   remy-admin datasources config [--source <slug>] [--placement <resource-id|shared>] [settings...]
+  remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--wait] [--timeout <sec>]
   remy-admin datasources revectorize [--source <slug>] [settings...] [--wait]
   remy-admin datasources promote [--source <slug>] [--force]
   remy-admin datasources drop [--source <slug>] [--version <n>]
@@ -762,11 +831,23 @@ Tuning a corpus:
                              capacity needs, roughly in proportion.
     --extraction-model <id>
 
-Notes:
+Placement (shared pool vs dedicated capacity, see \`infra --help\`):
   --source defaults to "${DEFAULT_SOURCE}" and is created on first use, on the
-    shared pool. A corpus meant for dedicated capacity (\`infra provision\`)
-    starts with \`create --placement <resource-id>\`, since a source with built
-    documents cannot move; \`config --placement\` moves one that is still empty.
+    shared pool. Start a corpus on a resource with \`create --placement\`, or
+    move one at any time with \`move --to <resource-id|shared>\`.
+  A move copies the corpus's stored vectors onto the new capacity in the
+    background: no re-extraction, no re-embedding, no charge beyond the
+    resource itself. Search keeps working from the old placement until the
+    copy lands; add, rm, config, revectorize and delete are refused with
+    data_source_migrating until then. \`datasources list\` shows progress;
+    \`move --wait\` blocks on it (exits ${EXIT.buildFailed} if the move failed,
+    ${EXIT.timeout} on timeout). Moving to \`shared\` is how a source leaves a
+    resource you mean to destroy.
+  A move is refused while documents are still building or a candidate version
+    exists (data_source_busy), when the target is not active
+    (capacity_<phase>), or when it would not fit (capacity_exceeded).
+
+Notes:
   --wait blocks until processing finishes, so you can search immediately after.
     Exits ${EXIT.buildFailed} if a document failed, ${EXIT.timeout} on timeout.
   Re-adding an unchanged file is free: no upload, no re-embedding. Re-adding

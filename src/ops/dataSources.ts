@@ -26,7 +26,9 @@ import type {
   DataSourcesDocumentStatus,
   DataSourcesDropResult,
   DataSourcesIngestUpdate,
+  DataSourcesListEntry,
   DataSourcesListResult,
+  DataSourcesMoveResult,
   DataSourcesPromoteResult,
   DataSourcesRetrievalUpdate,
   DataSourcesRevectorizeResult,
@@ -461,9 +463,8 @@ export interface ConfigSetParams {
   retrieval?: DataSourcesRetrievalUpdate;
   /**
    * Where the corpus lives: a dedicated resource (see `admin.infra`) or the
-   * shared pool. Accepted only while the source has no built documents —
-   * moving a populated source is refused with
-   * `placement_change_requires_migration`.
+   * shared pool. An empty source moves on the spot; a populated one starts a
+   * background move (see `move`) and the response carries its `migration`.
    */
   placement?: { resourceId: string } | 'shared';
 }
@@ -476,7 +477,8 @@ export interface ConfigSetParams {
  * instead, which builds a new version alongside the live one so search never
  * degrades.
  *
- * @throws AdminApiError `data_source_not_found` (404).
+ * @throws AdminApiError `data_source_not_found` (404),
+ *   `data_source_migrating` (422) while a move is in flight.
  * @example
  * await admin.dataSources.configSet({
  *   slug: 'policies',
@@ -518,14 +520,13 @@ export interface CreateParams {
  * Create an empty data source, optionally on dedicated capacity.
  *
  * The one-step way to start a corpus on a resource. `add` also creates a
- * source on first use, but on the shared pool, and a source with built
- * documents cannot move, so a corpus meant for dedicated capacity starts here.
- * Calling this for a source that already exists returns it; a placement given
- * then follows `configSet`'s rule and moves it only while it is empty.
+ * source on first use, but on the shared pool. Calling this for a source that
+ * already exists returns it; a placement given then follows `configSet`'s
+ * rule — an empty source moves on the spot, a populated one starts a move.
  *
  * @throws AdminApiError `invalid_data_source` (400), `data_source_limit` (422),
  *   `resource_not_found` (404), `resource_destroyed` (422),
- *   `placement_change_requires_migration` (422).
+ *   `data_source_migrating` (422), `capacity_exceeded` (422).
  * @example
  * await admin.dataSources.create({ slug: 'archive', placement: { resourceId } });
  */
@@ -537,6 +538,117 @@ export function create(ctx: AdminContext, params: CreateParams) {
     ...(ingest ? { ingest } : {}),
     ...(placement !== undefined ? { placement } : {}),
   });
+}
+
+// ─── move ────────────────────────────────────────────────────────────────────
+
+export interface MoveParams {
+  /** Data source slug. */
+  slug: string;
+  /** A dedicated resource (see `admin.infra`) or the shared pool. */
+  placement: { resourceId: string } | 'shared';
+}
+
+/**
+ * Move a data source between placements: shared → dedicated, dedicated →
+ * shared, or one resource to another.
+ *
+ * A populated source is copied onto the target in the background from its
+ * stored vectors — nothing is re-extracted or re-embedded — and flips when the
+ * copy lands. Search keeps serving from the old placement meanwhile. Adding,
+ * removing or reconfiguring documents is refused with `data_source_migrating`
+ * until it finishes; `waitForMove` blocks on that. Moving to `'shared'` is how
+ * a source leaves a resource that is about to be destroyed.
+ *
+ * @throws AdminApiError `data_source_not_found` (404), `same_placement` (400),
+ *   `data_source_busy` (422) while documents are still building or a
+ *   candidate version exists, `data_source_migrating` (422), `capacity_<phase>`
+ *   (422) when the target resource is not active, `capacity_exceeded` (422)
+ *   when the target is too small, `resource_not_found` (404).
+ * @example
+ * await admin.dataSources.move({ slug: 'archive', placement: { resourceId } });
+ * const result = await admin.dataSources.waitForMove({ slug: 'archive' });
+ */
+export function move(ctx: AdminContext, params: MoveParams) {
+  return call<DataSourcesMoveResult>(ctx, 'POST', `${base(ctx.appId)}/move`, {
+    slug: params.slug,
+    placement: params.placement,
+  });
+}
+
+export interface WaitForMoveParams {
+  slug: string;
+  /** Defaults to DEFAULT_WAIT_TIMEOUT_MS (15 min). */
+  timeoutMs?: number;
+  /** Receives `moving… X/Y documents (Ns)`. */
+  onProgress?: (message: string) => void;
+}
+
+export type WaitForMoveResult =
+  | { status: 'done'; source: DataSourcesListEntry }
+  | { status: 'failed'; source: DataSourcesListEntry; error: string }
+  | { status: 'timeout'; source: DataSourcesListEntry; error: string };
+
+/**
+ * Poll until a source's move has landed, failed, or the timeout elapses.
+ *
+ * Reads the source from `list` each poll; done when no move is in flight. A
+ * failed move returns immediately with the platform's error.
+ *
+ * @throws AdminApiError `data_source_not_found` (404).
+ */
+export async function waitForMove(
+  ctx: AdminContext,
+  params: WaitForMoveParams,
+): Promise<WaitForMoveResult> {
+  const timeoutMs = params.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
+  const start = Date.now();
+  let transientSince: number | null = null;
+
+  for (;;) {
+    let source: DataSourcesListEntry | undefined;
+    try {
+      const { dataSources } = await list(ctx);
+      source = dataSources.find((s) => s.slug === params.slug);
+      transientSince = null;
+    } catch (err) {
+      if (!isTransientError(err)) {
+        throw err;
+      }
+      transientSince ??= Date.now();
+      if (Date.now() - transientSince > TRANSIENT_GRACE_MS) {
+        throw err;
+      }
+      params.onProgress?.(
+        `retrying after a gateway error… (${Math.round((Date.now() - start) / 1000)}s)`,
+      );
+      await sleep(POLL_MS);
+      continue;
+    }
+    if (!source) {
+      throw new Error(`Data source "${params.slug}" not found.`);
+    }
+    const migration = source.migration;
+    if (!migration) {
+      return { status: 'done', source };
+    }
+    if (migration.error) {
+      return { status: 'failed', source, error: migration.error };
+    }
+    if (Date.now() - start > timeoutMs) {
+      return {
+        status: 'timeout',
+        source,
+        error: `Timed out after ${Math.round(timeoutMs / 1000)}s with ${migration.copied}/${migration.total} documents copied`,
+      };
+    }
+    params.onProgress?.(
+      `moving… ${migration.copied}/${migration.total} documents (${Math.round(
+        (Date.now() - start) / 1000,
+      )}s)`,
+    );
+    await sleep(POLL_MS);
+  }
 }
 
 // ─── revectorize ──────────────────────────────────────────────────────────────

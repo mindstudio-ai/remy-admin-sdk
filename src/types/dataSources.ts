@@ -193,6 +193,26 @@ export interface DataSourcesPlacement {
   phase: string;
 }
 
+/**
+ * A placement move in flight on the active version, or the last one's
+ * failure; null when idle. The points are copied from durable storage onto
+ * the target in the background (no re-embedding); the source flips when
+ * `copied` reaches `total`. While it runs, writes to the source are refused
+ * with `data_source_migrating`; search keeps serving from the old placement.
+ * A sibling of `placement` because a source on the shared pool (placement
+ * null) can be moving too.
+ */
+export interface DataSourcesMigration {
+  /** Where it is going; null is the shared pool. */
+  toResourceId: string | null;
+  toName: string | null;
+  copied: number;
+  total: number;
+  startedAt: string;
+  /** Set when the move failed; the source is unfrozen and a new move may start. */
+  error: string | null;
+}
+
 /** One data source in the GET /datasources listing. */
 export interface DataSourcesListEntry {
   id: string;
@@ -213,6 +233,8 @@ export interface DataSourcesListEntry {
   candidate: { version: number; progress: DataSourcesBuildProgress } | null;
   /** Dedicated placement, or null for the shared pool. */
   placement: DataSourcesPlacement | null;
+  /** A move in flight, or its last failure. */
+  migration: DataSourcesMigration | null;
   createdAt: string;
 }
 
@@ -293,13 +315,19 @@ export interface DataSourcesConfigResult {
   candidate: { version: number; config: DataSourcesIngestConfig } | null;
 }
 
-/** POST /datasources/config — response after updating configuration. */
+/**
+ * POST /datasources/config — response after updating configuration.
+ *
+ * `placementChanged` with `migration` set means a populated source started a
+ * background move rather than moving on the spot.
+ */
 export interface DataSourcesConfigUpdateResult {
   ingestChanged: boolean;
   placementChanged: boolean;
   ingest: DataSourcesIngestConfig;
   retrieval: Partial<DataSourcesRetrievalConfig>;
   placement: DataSourcesPlacement | null;
+  migration: DataSourcesMigration | null;
 }
 
 /** POST /datasources — an empty source, on the requested placement. */
@@ -314,6 +342,14 @@ export interface DataSourcesCreateResult {
   };
   pipeline: { version: number; config: DataSourcesIngestConfig };
   placement: DataSourcesPlacement | null;
+  migration: DataSourcesMigration | null;
+}
+
+/** POST /datasources/move — the move as started (or applied, for an empty source). */
+export interface DataSourcesMoveResult {
+  placement: DataSourcesPlacement | null;
+  /** Null when the source was empty and moved on the spot. */
+  migration: DataSourcesMigration | null;
 }
 
 /**

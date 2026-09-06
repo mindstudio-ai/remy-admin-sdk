@@ -10,7 +10,7 @@ import { CliError, EXIT } from '../errors.js';
 import * as infra from '../ops/infra.js';
 import { out, progress } from '../output.js';
 import type { Handler } from '../types.js';
-import type { InfraPhase } from '../types/infra.js';
+import type { InfraPhase, InfraResource } from '../types/infra.js';
 
 export const infraSpecs = {
   'infra list': {
@@ -56,11 +56,26 @@ export const infraSpecs = {
     flags: { name: { type: 'string' } },
     requireAnyOf: { flags: ['name'], message: '--name is required.' },
   },
+  'infra resize': {
+    usage:
+      'Usage: remy-admin infra resize <id> --offering <id> [--wait] [--timeout <sec>]',
+    positionals: [{ name: 'id', required: true }],
+    flags: {
+      offering: { type: 'string' },
+      wait: { type: 'boolean' },
+      timeout: { type: 'string' },
+    },
+    requireAnyOf: {
+      flags: ['offering'],
+      message: '--offering is required (see `infra list` for the sizes).',
+    },
+  },
 } satisfies Record<string, CommandSpec>;
 
 /**
- * Block until the resource reaches `phases`. Exit codes follow the `releases
- * wait` contract: 1 when the platform reports failure, 2 on timeout.
+ * Block until the resource reaches `phases` (and `until`, when given). Exit
+ * codes follow the `releases wait` contract: 1 when the platform reports
+ * failure, 2 on timeout.
  */
 async function waitAndReport(
   ctx: AdminContext,
@@ -68,11 +83,13 @@ async function waitAndReport(
   id: string,
   phases: InfraPhase[],
   summary: Record<string, unknown>,
+  until?: (resource: InfraResource) => boolean,
 ) {
   const timeoutSec = a.str('timeout');
   const result = await infra.waitForPhase(ctx, {
     id,
     phases,
+    ...(until ? { until } : {}),
     ...(timeoutSec ? { timeoutMs: Number(timeoutSec) * 1000 } : {}),
     onProgress: progress,
   });
@@ -93,6 +110,24 @@ async function infraGet(ctx: AdminContext, a: Args) {
   out(await infra.get(ctx, { id: a.req('id') }));
 }
 
+/**
+ * What a lease costs, from the price the platform put on the row. Printed with
+ * every provision so the commitment is visible in the same output that made it;
+ * the platform has already verified a month's credits before accepting.
+ */
+function pricingOf(resource: InfraResource) {
+  const offering = resource.offering;
+  if (!offering) {
+    return null;
+  }
+  return {
+    offering: offering.id,
+    activeMonthlyDollars: offering.monthlyPriceDollars,
+    hibernatedMonthlyDollars: offering.hibernatedMonthlyPriceDollars,
+    note: "Bills hourly from activation. A month's credits were verified before the lease was accepted.",
+  };
+}
+
 async function infraProvision(ctx: AdminContext, a: Args) {
   const offeringId = a.str('offering') as string;
   const name = a.str('name');
@@ -100,14 +135,19 @@ async function infraProvision(ctx: AdminContext, a: Args) {
     offeringId,
     ...(name ? { name } : {}),
   });
+  const pricing = pricingOf(resource);
   if (!a.bool('wait')) {
     out({
       resource,
+      pricing,
       note: 'Provisioning; poll `infra get <id>` or re-run with --wait.',
     });
     return;
   }
-  await waitAndReport(ctx, a, resource.id, ['active'], { action: 'provision' });
+  await waitAndReport(ctx, a, resource.id, ['active'], {
+    action: 'provision',
+    pricing,
+  });
 }
 
 async function infraHibernate(ctx: AdminContext, a: Args) {
@@ -149,6 +189,39 @@ async function infraRename(ctx: AdminContext, a: Args) {
   );
 }
 
+/**
+ * A resize ends in the phase it started from — active comes back active,
+ * hibernated stays hibernated — so the wait is "that phase, once the pending
+ * size has cleared", not a new phase.
+ */
+async function infraResize(ctx: AdminContext, a: Args) {
+  const id = a.req('id');
+  const { resource } = await infra.resize(ctx, {
+    id,
+    offeringId: a.str('offering') as string,
+  });
+  const pricing = pricingOf({
+    ...resource,
+    offering: resource.resizingTo ?? resource.offering,
+  });
+  if (!a.bool('wait')) {
+    out({
+      resource,
+      pricing,
+      note: 'Resizing; searches on its sources pause while it is parked and restored. Poll `infra get <id>` or re-run with --wait.',
+    });
+    return;
+  }
+  await waitAndReport(
+    ctx,
+    a,
+    id,
+    [resource.phase],
+    { action: 'resize', pricing },
+    (r) => r.resizingTo === null,
+  );
+}
+
 export const infraHandlers = {
   'infra list': infraList,
   'infra get': infraGet,
@@ -157,6 +230,7 @@ export const infraHandlers = {
   'infra resume': infraResume,
   'infra destroy': infraDestroy,
   'infra rename': infraRename,
+  'infra resize': infraResize,
 } satisfies Record<keyof typeof infraSpecs, Handler>;
 
 export const infraHelp = `remy-admin infra — Dedicated infrastructure your app leases from the platform.
@@ -166,16 +240,18 @@ for data sources, isolated from the shared pool. Sizes and prices come from the
 platform catalog (\`infra list\` prints them); nothing is priced client-side.
 
 A resource bills by the hour from activation, at the retained-storage rate while
-hibernated, and not at all once destroyed. Provisioning needs a month's worth of
-credits available in the workspace; nothing is charged until activation. Every
-action below is audited.
+hibernated, and not at all once destroyed. Provisioning (and growing) needs a
+month's worth of credits available in the workspace, checked before the request
+is accepted; nothing is charged until activation. The provision output prints
+the price it committed to. Every action below is audited.
 
 Subcommands:
   list        Resources on this app, plus the offerings you can provision
   get         One resource with its state timeline and attached sources
-  provision   Lease a new resource (spends credits)
+  provision   Lease a new resource (needs a month's credits; prints the price)
   hibernate   Park it: data kept, searches paused, compute charge stops
   resume      Bring a hibernated resource back
+  resize      Change its size, data intact (passes through hibernated)
   destroy     Delete it (refused while data sources are placed on it)
   rename      Change the display name
 
@@ -185,26 +261,44 @@ Usage:
   remy-admin infra provision --offering <id> [--name <name>] [--wait] [--timeout <sec>]
   remy-admin infra hibernate <id> [--wait] [--timeout <sec>]
   remy-admin infra resume <id> [--wait] [--timeout <sec>]
+  remy-admin infra resize <id> --offering <id> [--wait] [--timeout <sec>]
   remy-admin infra destroy <id> [--wait] [--timeout <sec>]
   remy-admin infra rename <id> --name <name>
 
 Placing a data source on a resource:
   remy-admin datasources create --source <slug> --placement <resource-id>
-  remy-admin datasources config --source <slug> --placement <resource-id>
-  remy-admin datasources config --source <slug> --placement shared
+  remy-admin datasources move --source <slug> --to <resource-id|shared> [--wait]
 
   Start a new corpus on a resource with \`create\`; \`add\` creates a source on
-  the shared pool. Placement can only change while the source has no built
-  documents; moving a populated source is a re-vectorization onto the new
-  capacity, which is not available yet. Searches on a source whose resource is
-  not active fail with capacity_<phase>: capacity_hibernated once parked,
-  capacity_hibernating / capacity_resuming while it moves, and
-  capacity_restoring while a resumed instance reloads its data.
+  the shared pool. A populated source moves with \`datasources move\`: its
+  stored vectors are copied onto the new capacity in the background (no
+  re-embedding), search keeps working from the old placement until the copy
+  lands, and adding or removing documents is refused with
+  data_source_migrating until it finishes. Moving to \`shared\` is how a source
+  leaves a resource you mean to destroy. See \`datasources --help\`.
 
-Phases:
+  Searches on a source whose resource is not active fail with
+  capacity_<phase>: capacity_hibernated once parked, capacity_hibernating /
+  capacity_resuming while it moves. \`active\` means searchable: a resumed
+  resource reports active only once its data is restored. capacity_restoring
+  is the rare case of an active instance that was replaced (node loss) and is
+  refilling from its snapshot. The messages are written for the app's end
+  user; the stable code is what to act on.
+
+Resizing:
+  A resize keeps the data. The resource is parked (a fresh snapshot), its spec
+  is swapped, and it comes back up restored from that snapshot, so searches on
+  its sources pause for the few minutes it takes. A hibernated resource swaps
+  in place and stays parked. Growing needs a month's credits at the new rate;
+  shrinking is refused below what the resource holds (resize_too_small).
+  \`infra get\` shows resizingTo until the swap has happened.
+
+Phases and timing:
   requested → provisioning → active ⇄ hibernated → destroyed, with hibernating /
   resuming / decommissioning in between and failed when a change cannot complete
-  (retried automatically; resume or hibernate to retry by hand).
+  (retried automatically; resume or hibernate to retry by hand). Each transition
+  takes about two minutes, more with more data: snapshots and restores scale
+  with the collection. --wait defaults to 600s; pass --timeout for a large one.
 
 --wait exit codes: 0 reached the target phase · 1 the platform reported failure ·
 2 still transitioning when --timeout elapsed (default 600s).`;

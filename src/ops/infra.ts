@@ -133,8 +133,9 @@ export function resume(ctx: AdminContext, params: ResourceIdParams) {
 
 /**
  * Delete a resource. Refused while any data source is placed on it — move
- * those to shared capacity (`datasources config --placement shared`) or
- * delete them first. Billing stops when the phase reaches `destroyed`.
+ * those to shared capacity (`admin.dataSources.move({ placement: 'shared' })`,
+ * data intact) or delete them first. Billing stops when the phase reaches
+ * `destroyed`.
  *
  * @throws AdminApiError `resource_not_found` (404),
  *   `resource_has_attachments` (422), `invalid_transition` (422).
@@ -144,6 +145,40 @@ export function destroy(ctx: AdminContext, params: ResourceIdParams) {
     ctx,
     'POST',
     `${base(ctx.appId)}/${encodeURIComponent(params.id)}/destroy`,
+  );
+}
+
+export interface ResizeParams {
+  id: string;
+  /** Offering id from `list().offerings`, e.g. `retrieval.medium`. */
+  offeringId: string;
+}
+
+/**
+ * Change a resource's size, keeping its data.
+ *
+ * The platform parks the resource (a fresh snapshot), swaps its spec, and
+ * brings it back up restored from that snapshot, so a resize passes through
+ * `hibernated` and searches on its sources pause for the few minutes it
+ * takes. A resource that is already hibernated swaps in place and stays
+ * parked. Growing is gated on a month of credits at the new rate like a
+ * provision; shrinking is refused below what the resource holds. The response
+ * carries `resizingTo` until the swap has happened; `waitForPhase` with
+ * `until: (r) => r.resizingTo === null` blocks on the whole thing.
+ *
+ * @throws AdminApiError `resource_not_found` (404), `offering_not_found`
+ *   (400), `offering_retired` (422), `same_offering` (400),
+ *   `offering_kind_mismatch` (400), `resize_pending` (422), `resize_too_small`
+ *   (422), `insufficient_credits` (402), `invalid_transition` (422).
+ * @example
+ * await admin.infra.resize({ id, offeringId: 'retrieval.medium' });
+ */
+export function resize(ctx: AdminContext, params: ResizeParams) {
+  return call<InfraResourceResult>(
+    ctx,
+    'POST',
+    `${base(ctx.appId)}/${encodeURIComponent(params.id)}/resize`,
+    { offeringId: params.offeringId },
   );
 }
 
@@ -168,6 +203,11 @@ export interface WaitForPhaseParams {
   id: string;
   /** The phase(s) that count as done. */
   phases: InfraPhase[];
+  /**
+   * An extra condition on top of the phase — a resize, for one, ends in the
+   * phase it started from and is done only once `resizingTo` has cleared.
+   */
+  until?: (resource: InfraResource) => boolean;
   /** Default 10 minutes. */
   timeoutMs?: number;
   onProgress?: (message: string) => void;
@@ -215,7 +255,7 @@ export async function waitForPhase(
       await sleep(POLL_MS);
       continue;
     }
-    if (wanted.has(resource.phase)) {
+    if (wanted.has(resource.phase) && (params.until?.(resource) ?? true)) {
       return { status: 'done', resource };
     }
     if (resource.phase === 'failed') {
@@ -234,7 +274,9 @@ export async function waitForPhase(
       };
     }
     params.onProgress?.(
-      `${resource.phase}${resource.detail ? ` · ${resource.detail}` : ''}… (${Math.round((Date.now() - start) / 1000)}s)`,
+      `${resource.phase}${resource.detail ? ` · ${resource.detail}` : ''}${
+        resource.resizingTo ? ` · resizing to ${resource.resizingTo.label}` : ''
+      }… (${Math.round((Date.now() - start) / 1000)}s)`,
     );
     await sleep(POLL_MS);
   }

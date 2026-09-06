@@ -36,6 +36,7 @@ Commands:
   settings    App settings — signup allowlist, test accounts, embed origins, toggles
   email       Email — delivery log, blast stats, unsubscribes, inbox, custom domains
   cron        Scheduled jobs — schedules, run history, manual trigger
+  infra       Dedicated infrastructure — provision, hibernate, resize + destroy retrieval capacity
 
 Run 'remy-admin <command> --help' for details on each command.
 
