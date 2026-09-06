@@ -14,6 +14,28 @@ import { AdminApiError, AdminTimeoutError } from './errors.js';
 
 /** Bound one request, so a hung API call can't hang the caller indefinitely. */
 export const REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * How long a poll loop keeps retrying through transient failures before it
+ * gives up. A `--wait` can run for many minutes over a tunnel; one 502 from a
+ * gateway says nothing about the thing being waited on.
+ */
+export const TRANSIENT_GRACE_MS = 2 * 60_000;
+
+/**
+ * A failure worth retrying inside a poll loop: the API answered 5xx (a gateway
+ * or tunnel between the CLI and the platform hiccupped), the request timed out,
+ * or the socket never connected. A 4xx is a real answer and is not.
+ */
+export function isTransientError(err: unknown): boolean {
+  if (err instanceof AdminApiError) {
+    return err.status >= 500;
+  }
+  if (err instanceof AdminTimeoutError) {
+    return true;
+  }
+  // undici surfaces a failed connection as a TypeError('fetch failed').
+  return err instanceof TypeError;
+}
 /** The raw Lighthouse report is a large artifact pulled from object storage. */
 export const REPORT_TIMEOUT_MS = 60_000;
 

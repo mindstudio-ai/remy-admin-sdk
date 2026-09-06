@@ -11,12 +11,13 @@
 import { createHash } from 'node:crypto';
 
 import type { AdminContext } from '../ctx.js';
-import { call, qs } from '../http.js';
+import { call, isTransientError, qs, TRANSIENT_GRACE_MS } from '../http.js';
 import { sleep } from '../sleep.js';
 import { uploadDirect } from '../upload.js';
 import type {
   DataSourcesConfigResult,
   DataSourcesConfigUpdateResult,
+  DataSourcesCreateResult,
   DataSourcesDeleteResult,
   DataSourcesDocument,
   DataSourcesDocumentConfirmResult,
@@ -209,13 +210,33 @@ export async function waitForIngest(
 
   const wanted = new Set(documentIds);
   const start = Date.now();
+  // A wait can run for minutes through a tunnel; one gateway error is not an
+  // answer about the documents, so it is retried for a while before it counts.
+  let transientSince: number | null = null;
 
   for (;;) {
-    const { documents: docs } = await call<DataSourcesDocumentsResult>(
-      ctx,
-      'GET',
-      `${base(ctx.appId)}/documents?slug=${encodeURIComponent(slug)}`,
-    );
+    let docs: DataSourcesDocumentStatus[] | undefined;
+    try {
+      ({ documents: docs } = await call<DataSourcesDocumentsResult>(
+        ctx,
+        'GET',
+        `${base(ctx.appId)}/documents?slug=${encodeURIComponent(slug)}`,
+      ));
+      transientSince = null;
+    } catch (err) {
+      if (!isTransientError(err)) {
+        throw err;
+      }
+      transientSince ??= Date.now();
+      if (Date.now() - transientSince > TRANSIENT_GRACE_MS) {
+        throw err;
+      }
+      onProgress?.(
+        `retrying after a gateway error… (${Math.round((Date.now() - start) / 1000)}s)`,
+      );
+      await sleep(POLL_MS);
+      continue;
+    }
     const tracked = (docs ?? []).filter((d) => wanted.has(d.id));
     const pending = tracked.filter((d) => d.status === 'processing');
     const failed = tracked.filter((d) => d.status === 'error');
@@ -423,6 +444,47 @@ export function configSet(ctx: AdminContext, params: ConfigSetParams) {
       ...(placement !== undefined ? { placement } : {}),
     },
   );
+}
+
+// ─── create ──────────────────────────────────────────────────────────────────
+
+export interface CreateParams {
+  /** Data source slug: lowercase [a-z0-9_-], up to 64 characters. */
+  slug: string;
+  /** Display name. */
+  name?: string;
+  /** Pinned ingest settings for the new pipeline; platform defaults otherwise. */
+  ingest?: DataSourcesIngestUpdate;
+  /**
+   * Where the corpus lives from the start: a dedicated resource (see
+   * `admin.infra`) or the shared pool (the default).
+   */
+  placement?: { resourceId: string } | 'shared';
+}
+
+/**
+ * Create an empty data source, optionally on dedicated capacity.
+ *
+ * The one-step way to start a corpus on a resource. `add` also creates a
+ * source on first use, but on the shared pool, and a source with built
+ * documents cannot move, so a corpus meant for dedicated capacity starts here.
+ * Calling this for a source that already exists returns it; a placement given
+ * then follows `configSet`'s rule and moves it only while it is empty.
+ *
+ * @throws AdminApiError `invalid_data_source` (400), `data_source_limit` (422),
+ *   `resource_not_found` (404), `resource_destroyed` (422),
+ *   `placement_change_requires_migration` (422).
+ * @example
+ * await admin.dataSources.create({ slug: 'archive', placement: { resourceId } });
+ */
+export function create(ctx: AdminContext, params: CreateParams) {
+  const { slug, name, ingest, placement } = params;
+  return call<DataSourcesCreateResult>(ctx, 'POST', base(ctx.appId), {
+    slug,
+    ...(name ? { name } : {}),
+    ...(ingest ? { ingest } : {}),
+    ...(placement !== undefined ? { placement } : {}),
+  });
 }
 
 // ─── revectorize ──────────────────────────────────────────────────────────────

@@ -166,8 +166,9 @@ for data sources, isolated from the shared pool. Sizes and prices come from the
 platform catalog (\`infra list\` prints them); nothing is priced client-side.
 
 A resource bills by the hour from activation, at the retained-storage rate while
-hibernated, and not at all once destroyed. Provisioning requires the workspace to
-cover one month up front. Every action below is audited.
+hibernated, and not at all once destroyed. Provisioning needs a month's worth of
+credits available in the workspace; nothing is charged until activation. Every
+action below is audited.
 
 Subcommands:
   list        Resources on this app, plus the offerings you can provision
@@ -188,13 +189,17 @@ Usage:
   remy-admin infra rename <id> --name <name>
 
 Placing a data source on a resource:
+  remy-admin datasources create --source <slug> --placement <resource-id>
   remy-admin datasources config --source <slug> --placement <resource-id>
   remy-admin datasources config --source <slug> --placement shared
 
-  Placement can only change while the source has no built documents; moving a
-  populated source is a re-vectorization onto the new capacity, which is not
-  available yet. Searches on a source whose resource is hibernated return
-  capacity_hibernated until it resumes.
+  Start a new corpus on a resource with \`create\`; \`add\` creates a source on
+  the shared pool. Placement can only change while the source has no built
+  documents; moving a populated source is a re-vectorization onto the new
+  capacity, which is not available yet. Searches on a source whose resource is
+  not active fail with capacity_<phase>: capacity_hibernated once parked,
+  capacity_hibernating / capacity_resuming while it moves, and
+  capacity_restoring while a resumed instance reloads its data.
 
 Phases:
   requested → provisioning → active ⇄ hibernated → destroyed, with hibernating /

@@ -282,6 +282,20 @@ export interface DataSourcesConfigUpdateResult {
   placement: DataSourcesPlacement | null;
 }
 
+/** POST /datasources — an empty source, on the requested placement. */
+export interface DataSourcesCreateResult {
+  dataSource: {
+    id: string;
+    slug: string;
+    name: string | null;
+    /** Dedicated resource id, or null for the shared pool. */
+    resourceId: string | null;
+    createdAt: string;
+  };
+  pipeline: { version: number; config: DataSourcesIngestConfig };
+  placement: DataSourcesPlacement | null;
+}
+
 /**
  * POST /datasources/revectorize — starts a new candidate pipeline alongside the live one.
  *

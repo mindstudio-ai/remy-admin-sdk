@@ -7,7 +7,7 @@
  */
 
 import type { AdminContext } from '../ctx.js';
-import { call } from '../http.js';
+import { call, isTransientError, TRANSIENT_GRACE_MS } from '../http.js';
 import { sleep } from '../sleep.js';
 import type {
   InfraGetResult,
@@ -77,8 +77,9 @@ export interface ProvisionParams {
 }
 
 /**
- * Lease a new resource. Spends credits: the workspace must cover one month's
- * equivalent up front, and the resource bills hourly from activation.
+ * Lease a new resource. Spends credits: the workspace must have a month's
+ * worth available before the request is accepted; nothing is charged until
+ * activation, and from then the resource bills by the hour.
  *
  * The response is the row in `requested`; the platform brings it to `active`
  * within a minute or so. Use `waitForPhase` to block on that.
@@ -104,8 +105,8 @@ export interface ResourceIdParams {
 
 /**
  * Park an active resource. Data is kept; searches on its data sources return
- * `capacity_hibernated` until it resumes; billing drops to the retained-storage
- * rate.
+ * `capacity_hibernating` while it parks and `capacity_hibernated` once parked,
+ * until it resumes; billing drops to the retained-storage rate.
  *
  * @throws AdminApiError `resource_not_found` (404), `invalid_transition` (422).
  */
@@ -191,9 +192,29 @@ export async function waitForPhase(
   const timeoutMs = params.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
   const wanted = new Set<InfraPhase>(params.phases);
   const start = Date.now();
+  // A provisioning wait runs for minutes, often through a tunnel; one gateway
+  // error is not an answer about the resource, so it is retried for a while.
+  let transientSince: number | null = null;
 
   for (;;) {
-    const { resource } = await get(ctx, { id: params.id });
+    let resource: InfraResource;
+    try {
+      ({ resource } = await get(ctx, { id: params.id }));
+      transientSince = null;
+    } catch (err) {
+      if (!isTransientError(err)) {
+        throw err;
+      }
+      transientSince ??= Date.now();
+      if (Date.now() - transientSince > TRANSIENT_GRACE_MS) {
+        throw err;
+      }
+      params.onProgress?.(
+        `retrying after a gateway error… (${Math.round((Date.now() - start) / 1000)}s)`,
+      );
+      await sleep(POLL_MS);
+      continue;
+    }
     if (wanted.has(resource.phase)) {
       return { status: 'done', resource };
     }
@@ -213,7 +234,7 @@ export async function waitForPhase(
       };
     }
     params.onProgress?.(
-      `${resource.phase}… (${Math.round((Date.now() - start) / 1000)}s)`,
+      `${resource.phase}${resource.detail ? ` · ${resource.detail}` : ''}… (${Math.round((Date.now() - start) / 1000)}s)`,
     );
     await sleep(POLL_MS);
   }

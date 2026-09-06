@@ -34,8 +34,9 @@ const POLL_MS = 3000;
  * "leave alone" has to be distinguishable from "turn off", and a bare
  * `--contextual` can only ever mean true.
  */
-const CONFIG_FLAGS = {
-  // Pinned — changing any of these needs a re-vectorize.
+// Pinned — changing any of these needs a re-vectorize. `create` takes exactly
+// these, since they are what a new pipeline is born with.
+const INGEST_FLAGS = {
   'max-chars': { type: 'number', min: 200 },
   'min-chars': { type: 'number', min: 0 },
   'drop-blocks': { type: 'string' },
@@ -45,7 +46,10 @@ const CONFIG_FLAGS = {
   'embedding-model': { type: 'string' },
   'image-model': { type: 'string' },
   'extraction-model': { type: 'string' },
-  // Live — take effect on the next search, no rebuild.
+} as const satisfies Record<string, FlagSpec>;
+
+// Live — take effect on the next search, no rebuild.
+const RETRIEVAL_FLAGS = {
   rerank: { type: 'string' },
   // Which cross-encoder reranks. Live, not pinned: a reranker runs at query
   // time over text already in the index, so switching costs nothing and is
@@ -53,6 +57,11 @@ const CONFIG_FLAGS = {
   'rerank-model': { type: 'string' },
   hybrid: { type: 'string' },
   'top-k': { type: 'number', min: 1 },
+} as const satisfies Record<string, FlagSpec>;
+
+const CONFIG_FLAGS = {
+  ...INGEST_FLAGS,
+  ...RETRIEVAL_FLAGS,
 } as const satisfies Record<string, FlagSpec>;
 
 export const dataSourcesSpecs = {
@@ -94,6 +103,16 @@ export const dataSourcesSpecs = {
       contains: { type: 'string' },
       'max-per-document': { type: 'number', min: 1 },
       highlight: { type: 'boolean' },
+    },
+  },
+  'datasources create': {
+    usage:
+      'Usage: remy-admin datasources create --source <slug> [--name <name>] [--placement <resource-id|shared>] [ingest settings...]',
+    flags: {
+      source: { type: 'string' },
+      name: { type: 'string' },
+      placement: { type: 'string' },
+      ...INGEST_FLAGS,
     },
   },
   'datasources config': {
@@ -471,17 +490,45 @@ function configFromFlags(a: Args): {
   };
 }
 
+/** `--placement <resource-id|shared>` as the API takes it; undefined when absent. */
+const placementOf = (a: Args) => {
+  const flag = a.str('placement');
+  return flag === undefined
+    ? undefined
+    : flag === 'shared'
+      ? ('shared' as const)
+      : { resourceId: flag };
+};
+
+/**
+ * Create an empty source, optionally on dedicated capacity. `add` creates a
+ * source on first use too, but on the shared pool, and a populated source
+ * cannot move — so a corpus meant for a resource starts here. An explicit
+ * --source, like `delete`: creating "default" by accident helps nobody.
+ */
+async function dataSourcesCreate(ctx: AdminContext, a: Args) {
+  const slug = a.str('source');
+  if (!slug) {
+    fatal('--source is required.');
+  }
+  const { ingest } = configFromFlags(a);
+  const name = a.str('name');
+  const placement = placementOf(a);
+  out(
+    await dataSources.create(ctx, {
+      slug,
+      ...(name ? { name } : {}),
+      ...(ingest ? { ingest } : {}),
+      ...(placement !== undefined ? { placement } : {}),
+    }),
+  );
+}
+
 /** Show config, or change it when any setting flag is present. */
 async function dataSourcesConfig(ctx: AdminContext, a: Args) {
   const slug = sourceOf(a);
   const { ingest, retrieval } = configFromFlags(a);
-  const placementFlag = a.str('placement');
-  const placement =
-    placementFlag === undefined
-      ? undefined
-      : placementFlag === 'shared'
-        ? ('shared' as const)
-        : { resourceId: placementFlag };
+  const placement = placementOf(a);
 
   if (!ingest && !retrieval && placement === undefined) {
     out(await dataSources.configGet(ctx, slug));
@@ -592,6 +639,7 @@ export const dataSourcesHandlers = {
   'datasources status': dataSourcesStatus,
   'datasources rm': dataSourcesRm,
   'datasources search': dataSourcesSearch,
+  'datasources create': dataSourcesCreate,
   'datasources config': dataSourcesConfig,
   'datasources revectorize': dataSourcesRevectorize,
   'datasources promote': dataSourcesPromote,
@@ -610,6 +658,7 @@ Subcommands:
   status       Show per-document ingest state
   rm           Remove a document and its vectors
   search       Query a corpus — useful to sanity-check one you just built
+  create       Create an empty source, optionally on dedicated capacity
   config       Show or change how a corpus is processed and searched
   revectorize  Rebuild a corpus under new settings, alongside the live one
   promote      Make a rebuilt version live
@@ -622,7 +671,8 @@ Usage:
   remy-admin datasources status [--source <slug>]
   remy-admin datasources rm [--source <slug>] --document <id>
   remy-admin datasources search [--source <slug>] [search options] <query>
-  remy-admin datasources config [--source <slug>] [settings...]
+  remy-admin datasources create --source <slug> [--name <name>] [--placement <resource-id|shared>] [rebuild settings...]
+  remy-admin datasources config [--source <slug>] [--placement <resource-id|shared>] [settings...]
   remy-admin datasources revectorize [--source <slug>] [settings...] [--wait]
   remy-admin datasources promote [--source <slug>] [--force]
   remy-admin datasources drop [--source <slug>] [--version <n>]
@@ -682,7 +732,10 @@ Tuning a corpus:
     --extraction-model <id>
 
 Notes:
-  --source defaults to "${DEFAULT_SOURCE}" and is created on first use.
+  --source defaults to "${DEFAULT_SOURCE}" and is created on first use, on the
+    shared pool. A corpus meant for dedicated capacity (\`infra provision\`)
+    starts with \`create --placement <resource-id>\`, since a source with built
+    documents cannot move; \`config --placement\` moves one that is still empty.
   --wait blocks until processing finishes, so you can search immediately after.
     Exits ${EXIT.buildFailed} if a document failed, ${EXIT.timeout} on timeout.
   Re-adding an unchanged file is free: no upload, no re-embedding. Re-adding

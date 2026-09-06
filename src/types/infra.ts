@@ -62,6 +62,11 @@ export interface InfraResource {
   lastError: string | null;
   /** Null until the instance exists (requested, hibernated, destroyed). */
   health: InfraHealth | null;
+  /**
+   * What the instance is doing right now, while a transition is under way
+   * ("Waiting for capacity", "Snapshotting ds_x (1/2)"); null when nothing is.
+   */
+  detail: string | null;
   /** When the last verified snapshot was taken; null if never. */
   lastSnapshotAt: string | null;
   activatedAt: string | null;
