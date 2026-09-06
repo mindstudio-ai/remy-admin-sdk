@@ -217,11 +217,8 @@ export async function waitForIngest(
   for (;;) {
     let docs: DataSourcesDocumentStatus[] | undefined;
     try {
-      ({ documents: docs } = await call<DataSourcesDocumentsResult>(
-        ctx,
-        'GET',
-        `${base(ctx.appId)}/documents?slug=${encodeURIComponent(slug)}`,
-      ));
+      // Only the documents being waited on: the source may hold millions.
+      docs = await allDocuments(ctx, { slug, ids: documentIds });
       transientSince = null;
     } catch (err) {
       if (!isTransientError(err)) {
@@ -272,23 +269,78 @@ export interface DocumentsParams {
   slug: string;
   /** true → watch a candidate pipeline (revectorize in progress). */
   candidate?: boolean;
+  /** Only these documents (at most DOCUMENTS_IDS_MAX per request). */
+  ids?: string[];
+  /** Page size, 1..1000 (server default 500). */
+  limit?: number;
+  /** `nextCursor` from the previous page. */
+  cursor?: string;
 }
 
+/** The server's cap on `ids` per request; `allDocuments` chunks to it. */
+export const DOCUMENTS_IDS_MAX = 200;
+
 /**
- * Fetch per-document ingest state for one pipeline.
+ * Fetch one page of per-document ingest state for one pipeline, oldest first.
  *
  * Returns an empty document list when the data source does not exist yet.
- * Pass `candidate: true` to watch a revectorization in progress.
+ * Pass `candidate: true` to watch a revectorization in progress. Follow
+ * `nextCursor` for the next page, or use `allDocuments` to walk them all.
  *
  * @example
- * const { documents } = await admin.dataSources.documents({ slug: 'policies' });
+ * const { documents, nextCursor } = await admin.dataSources.documents({ slug: 'policies' });
  */
 export function documents(ctx: AdminContext, params: DocumentsParams) {
   return call<DataSourcesDocumentsResult>(
     ctx,
     'GET',
-    `${base(ctx.appId)}/documents${qs({ slug: params.slug, candidate: params.candidate || undefined })}`,
+    `${base(ctx.appId)}/documents${qs({
+      slug: params.slug,
+      candidate: params.candidate || undefined,
+      ids: params.ids?.length ? params.ids.join(',') : undefined,
+      limit: params.limit,
+      cursor: params.cursor,
+    })}`,
   );
+}
+
+/**
+ * Every document (or every one of `ids`), following pages to the end.
+ *
+ * With `ids`, requests are chunked to the server's per-request cap, so a wait
+ * over hundreds of just-added files stays a handful of small calls rather than
+ * a walk of the whole source.
+ *
+ * @example
+ * const docs = await admin.dataSources.allDocuments({ slug: 'policies' });
+ */
+export async function allDocuments(
+  ctx: AdminContext,
+  params: Omit<DocumentsParams, 'cursor' | 'limit'>,
+): Promise<DataSourcesDocumentStatus[]> {
+  const groups: Array<string[] | undefined> = params.ids
+    ? Array.from(
+        { length: Math.ceil(params.ids.length / DOCUMENTS_IDS_MAX) },
+        (_, i) =>
+          params.ids!.slice(i * DOCUMENTS_IDS_MAX, (i + 1) * DOCUMENTS_IDS_MAX),
+      )
+    : [undefined];
+  const out: DataSourcesDocumentStatus[] = [];
+  for (const ids of groups) {
+    let cursor: string | undefined;
+    do {
+      const page = await documents(ctx, {
+        slug: params.slug,
+        candidate: params.candidate,
+        ids,
+        limit: 1000,
+        cursor,
+      });
+      out.push(...(page.documents ?? []));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+  }
+  return out;
 }
 
 // ─── list ─────────────────────────────────────────────────────────────────────

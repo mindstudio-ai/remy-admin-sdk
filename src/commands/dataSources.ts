@@ -37,6 +37,7 @@ const POLL_MS = 3000;
 // Pinned — changing any of these needs a re-vectorize. `create` takes exactly
 // these, since they are what a new pipeline is born with.
 const INGEST_FLAGS = {
+  chunking: { type: 'string' },
   'max-chars': { type: 'number', min: 200 },
   'min-chars': { type: 'number', min: 0 },
   'drop-blocks': { type: 'string' },
@@ -44,9 +45,12 @@ const INGEST_FLAGS = {
   'contextual-model': { type: 'string' },
   'describe-images': { type: 'string' },
   'embedding-model': { type: 'string' },
+  'embedding-dimensions': { type: 'number', min: 1 },
   'image-model': { type: 'string' },
   'extraction-model': { type: 'string' },
 } as const satisfies Record<string, FlagSpec>;
+
+const CHUNKING_STRATEGIES = ['structural', 'whole'] as const;
 
 // Live — take effect on the next search, no rebuild.
 const RETRIEVAL_FLAGS = {
@@ -237,10 +241,10 @@ async function dataSourcesList(ctx: AdminContext) {
 
 async function dataSourcesStatus(ctx: AdminContext, a: Args) {
   const slug = sourceOf(a);
-  const { documents } = await dataSources.documents(ctx, { slug });
+  const documents = await dataSources.allDocuments(ctx, { slug });
   out({
     dataSource: slug,
-    documents: (documents ?? []).map(dataSources.summarize),
+    documents: documents.map(dataSources.summarize),
   });
 }
 
@@ -416,6 +420,15 @@ function configFromFlags(a: Args): {
   retrieval: DataSourcesRetrievalUpdate | undefined;
 } {
   const chunking: NonNullable<DataSourcesIngestUpdate['chunking']> = {};
+  const strategy = a.str('chunking');
+  if (strategy !== undefined) {
+    if (!(CHUNKING_STRATEGIES as readonly string[]).includes(strategy)) {
+      fatal(
+        `--chunking must be one of: ${CHUNKING_STRATEGIES.join(', ')} (got "${strategy}").`,
+      );
+    }
+    chunking.strategy = strategy as (typeof CHUNKING_STRATEGIES)[number];
+  }
   if (a.num('max-chars') !== undefined) {
     chunking.maxChars = a.num('max-chars');
   }
@@ -448,6 +461,7 @@ function configFromFlags(a: Args): {
     ...(a.str('image-model') ? { modelId: a.str('image-model') } : {}),
   };
   const embeddingModel = a.str('embedding-model');
+  const embeddingDimensions = a.num('embedding-dimensions');
   const extractionModel = a.str('extraction-model');
 
   const ingest: DataSourcesIngestUpdate = {};
@@ -460,8 +474,13 @@ function configFromFlags(a: Args): {
   if (Object.keys(images).length) {
     ingest.images = images;
   }
-  if (embeddingModel) {
-    ingest.embedding = { modelId: embeddingModel };
+  if (embeddingModel || embeddingDimensions !== undefined) {
+    ingest.embedding = {
+      ...(embeddingModel ? { modelId: embeddingModel } : {}),
+      ...(embeddingDimensions !== undefined
+        ? { dimensions: embeddingDimensions }
+        : {}),
+    };
   }
   if (extractionModel) {
     ingest.extraction = { modelId: extractionModel };
@@ -573,12 +592,12 @@ async function dataSourcesRevectorize(ctx: AdminContext, a: Args) {
   const start = Date.now();
 
   for (;;) {
-    const { documents } = await dataSources.documents(ctx, {
+    const documents = await dataSources.allDocuments(ctx, {
       slug,
       candidate: true,
     });
-    const pending = (documents ?? []).filter((d) => d.status === 'processing');
-    const failed = (documents ?? []).filter((d) => d.status === 'error');
+    const pending = documents.filter((d) => d.status === 'processing');
+    const failed = documents.filter((d) => d.status === 'error');
 
     if (pending.length === 0) {
       out({
@@ -714,6 +733,13 @@ Tuning a corpus:
   reprocessed. Changing these on a corpus that already has documents is
   REJECTED; use \`revectorize\` instead, which builds a new version alongside
   the live one so search never degrades:
+    --chunking <structural|whole>
+                             structural (default) splits on headings, blocks
+                             and paragraphs. whole embeds each document as one
+                             chunk: for corpora of short records (articles,
+                             tickets, product rows) where the document is the
+                             unit you want back. Documents over --max-chars
+                             (default 24000 for whole) fall back to structural.
     --max-chars <n>          Target chunk size (default 2000)
     --min-chars <n>          Merge chunks smaller than this (default 120)
     --drop-blocks <a,b>      Block types to discard, e.g. footer,header
@@ -729,6 +755,11 @@ Tuning a corpus:
                              invisible to search rather than merely ranked low.
     --image-model <id>
     --embedding-model <id>
+    --embedding-dimensions <n>  Vector width, for models that offer several
+                             (Matryoshka). Must be the model's native size or
+                             one it lists; the error names the choices.
+                             Smaller vectors cut index memory, and dedicated
+                             capacity needs, roughly in proportion.
     --extraction-model <id>
 
 Notes:

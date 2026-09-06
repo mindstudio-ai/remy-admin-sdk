@@ -14,10 +14,21 @@
  * Chunking settings pinned at pipeline creation.
  * Any change requires a revectorize, not a config update.
  */
+/**
+ * `structural` splits on document structure (headings, blocks, paragraphs);
+ * `whole` embeds each document as a single chunk, for corpora of short records
+ * where the document is the retrieval unit.
+ */
+export type DataSourcesChunkingStrategy = 'structural' | 'whole';
+
 export interface DataSourcesChunkingConfig {
-  strategy: 'structural';
+  strategy: DataSourcesChunkingStrategy;
   version: number;
-  /** Rough char budget per chunk; structure wins over budget, never the reverse. */
+  /**
+   * Rough char budget per chunk; structure wins over budget, never the reverse.
+   * For `whole`, the ceiling above which a document is chunked structurally
+   * instead (default 24000).
+   */
   maxChars: number;
   /** Below this a chunk is merged forward rather than embedded on its own. */
   minChars: number;
@@ -51,13 +62,19 @@ export interface DataSourcesIngestConfig {
  */
 export interface DataSourcesIngestUpdate {
   chunking?: {
+    /** Naming a strategy pins its current version; versions are not settable. */
+    strategy?: DataSourcesChunkingStrategy;
     maxChars?: number;
     minChars?: number;
     dropBlockTypes?: string[];
   };
   contextual?: { enabled?: boolean; modelId?: string };
   images?: { describe?: boolean; modelId?: string };
-  embedding?: { modelId: string };
+  /**
+   * `dimensions` must be the model's native size or one of its Matryoshka
+   * sizes; omitted = native. Either half alone re-resolves the pair.
+   */
+  embedding?: { modelId?: string; dimensions?: number };
   extraction?: { modelId: string };
 }
 
@@ -116,13 +133,16 @@ export interface DataSourcesDocumentStatus {
 }
 
 /**
- * GET /datasources/documents — per-document ingest state for one pipeline.
+ * GET /datasources/documents — one page of per-document ingest state for one
+ * pipeline, oldest first.
  *
  * `pipelineVersion` is absent when the data source does not exist (returns `{ documents: [] }`).
- * `candidate=true` watches a migration in progress.
+ * `candidate=true` watches a migration in progress. `nextCursor` is set when
+ * more pages follow; `allDocuments` walks them.
  */
 export interface DataSourcesDocumentsResult {
   pipelineVersion?: number;
+  nextCursor?: string | null;
   documents: DataSourcesDocumentStatus[];
 }
 
