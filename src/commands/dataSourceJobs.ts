@@ -222,7 +222,7 @@ Bulk ingestion (jobs):
   Options on start:
     --approve          Run as soon as the plan passes the gates, no separate approve
     --budget <dollars> Pause when estimated spend reaches this (default 1.5x the plan)
-    --concurrency <n>  Batches in flight at once (default 8, max 64)
+    --concurrency <n>  Batches in flight at once (default 64, max 128)
     --limit <n>        Only the first N objects: a cheap sample of the corpus
     --wait             Block until the plan is ready (or, with --approve, until done)
 

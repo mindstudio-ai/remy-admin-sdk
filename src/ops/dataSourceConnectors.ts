@@ -121,6 +121,10 @@ export interface SyncParams {
   slug: string;
   /** Override the connector's per-sync budget for this run, in dollars. */
   budgetDollars?: number;
+  /** Only the first N objects of the listing — a slice to measure or check. */
+  limit?: number;
+  /** Batches in flight (default 64, max 128). */
+  concurrency?: number;
 }
 
 /**
@@ -136,6 +140,10 @@ export function sync(ctx: AdminContext, params: SyncParams) {
     slug: params.slug,
     ...(params.budgetDollars !== undefined
       ? { budgetDollars: params.budgetDollars }
+      : {}),
+    ...(params.limit !== undefined ? { limit: params.limit } : {}),
+    ...(params.concurrency !== undefined
+      ? { concurrency: params.concurrency }
       : {}),
   });
 }

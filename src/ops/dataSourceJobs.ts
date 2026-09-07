@@ -38,7 +38,7 @@ export interface StartParams {
   approve?: boolean;
   /** Stop when estimated spend reaches this; default 1.5× the projection. */
   budgetDollars?: number;
-  /** Batches in flight at once (default 8, max 64). */
+  /** Batches in flight at once (default 64, max 128). */
   concurrency?: number;
   /** Process only the first N objects — a sample of the corpus. */
   limit?: number;

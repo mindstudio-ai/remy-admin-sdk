@@ -38,10 +38,12 @@ export const dataSourceConnectorsSpecs = {
   },
   'datasources sync': {
     usage:
-      'Usage: remy-admin datasources sync [--source <slug>] [--budget <dollars>] [--wait] [--timeout <sec>]',
+      'Usage: remy-admin datasources sync [--source <slug>] [--budget <dollars>] [--limit <n>] [--concurrency <n>] [--wait] [--timeout <sec>]',
     flags: {
       source: { type: 'string' },
       budget: { type: 'number', min: 0.01 },
+      limit: { type: 'number', min: 1 },
+      concurrency: { type: 'number', min: 1 },
       wait: { type: 'boolean' },
       timeout: { type: 'string' },
     },
@@ -119,9 +121,13 @@ async function disconnect(ctx: AdminContext, a: Args) {
 async function sync(ctx: AdminContext, a: Args) {
   const slug = sourceOf(a);
   const budget = a.num('budget');
+  const limit = a.num('limit');
+  const concurrency = a.num('concurrency');
   const { job } = await connectors.sync(ctx, {
     slug,
     ...(budget !== undefined ? { budgetDollars: budget } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+    ...(concurrency !== undefined ? { concurrency } : {}),
   });
   if (!a.bool('wait')) {
     out({
@@ -149,7 +155,7 @@ export const dataSourceConnectorsHelp = `
 Following an S3 bucket (connectors):
   remy-admin datasources connect --source <slug> --bucket <name> --region <aws-region> [--prefix <p>] --access-key-secret <NAME> --secret-key-secret <NAME> [--deletions mirror|keep] [--budget-per-sync <dollars>]
   remy-admin datasources connector [--source <slug>]
-  remy-admin datasources sync [--source <slug>] [--budget <dollars>] [--wait] [--timeout <sec>]
+  remy-admin datasources sync [--source <slug>] [--budget <dollars>] [--limit <n>] [--concurrency <n>] [--wait] [--timeout <sec>]
   remy-admin datasources disconnect --source <slug>
 
   A connector makes a bucket the customer owns the origin of a source. The
