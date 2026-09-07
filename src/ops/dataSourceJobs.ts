@@ -134,11 +134,20 @@ export function get(ctx: AdminContext, params: JobIdParams) {
  *   `plan_requires_dedicated` (422), `plan_exceeds_capacity` (422),
  *   `insufficient_credits` (402).
  */
-export function approve(ctx: AdminContext, params: JobIdParams) {
+export function approve(
+  ctx: AdminContext,
+  params: JobIdParams & {
+    /** Batches in flight from here on (max 128); the plan was made at the job's current value. */
+    concurrency?: number;
+  },
+) {
   return call<DataSourceJobResult>(
     ctx,
     'POST',
     `${base(ctx.appId)}/${encodeURIComponent(params.id)}/approve`,
+    params.concurrency !== undefined
+      ? { concurrency: params.concurrency }
+      : undefined,
   );
 }
 
@@ -152,11 +161,20 @@ export function pause(ctx: AdminContext, params: JobIdParams) {
 }
 
 /** Continue from the checkpoint; failed batches with attempts left are retried. */
-export function resume(ctx: AdminContext, params: JobIdParams) {
+export function resume(
+  ctx: AdminContext,
+  params: JobIdParams & {
+    /** Batches in flight from here on (max 128). */
+    concurrency?: number;
+  },
+) {
   return call<DataSourceJobResult>(
     ctx,
     'POST',
     `${base(ctx.appId)}/${encodeURIComponent(params.id)}/resume`,
+    params.concurrency !== undefined
+      ? { concurrency: params.concurrency }
+      : undefined,
   );
 }
 

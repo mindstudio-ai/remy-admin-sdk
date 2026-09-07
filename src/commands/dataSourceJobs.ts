@@ -52,9 +52,13 @@ export const dataSourceJobsSpecs = {
   },
   'datasources jobs approve': {
     usage:
-      'Usage: remy-admin datasources jobs approve <id> [--wait] [--timeout <sec>]',
+      'Usage: remy-admin datasources jobs approve <id> [--concurrency <n>] [--wait] [--timeout <sec>]',
     positionals: [{ name: 'id', required: true }],
-    flags: { wait: { type: 'boolean' }, timeout: { type: 'string' } },
+    flags: {
+      concurrency: { type: 'number', min: 1 },
+      wait: { type: 'boolean' },
+      timeout: { type: 'string' },
+    },
   },
   'datasources jobs pause': {
     usage: 'Usage: remy-admin datasources jobs pause <id>',
@@ -62,9 +66,13 @@ export const dataSourceJobsSpecs = {
   },
   'datasources jobs resume': {
     usage:
-      'Usage: remy-admin datasources jobs resume <id> [--wait] [--timeout <sec>]',
+      'Usage: remy-admin datasources jobs resume <id> [--concurrency <n>] [--wait] [--timeout <sec>]',
     positionals: [{ name: 'id', required: true }],
-    flags: { wait: { type: 'boolean' }, timeout: { type: 'string' } },
+    flags: {
+      concurrency: { type: 'number', min: 1 },
+      wait: { type: 'boolean' },
+      timeout: { type: 'string' },
+    },
   },
   'datasources jobs cancel': {
     usage: 'Usage: remy-admin datasources jobs cancel <id>',
@@ -155,7 +163,11 @@ async function jobsStatus(ctx: AdminContext, a: Args) {
 
 async function jobsApprove(ctx: AdminContext, a: Args) {
   const id = a.req('id');
-  const { job } = await jobs.approve(ctx, { id });
+  const concurrency = a.num('concurrency');
+  const { job } = await jobs.approve(ctx, {
+    id,
+    ...(concurrency !== undefined ? { concurrency } : {}),
+  });
   if (!a.bool('wait')) {
     out({
       job,
@@ -172,7 +184,11 @@ async function jobsPause(ctx: AdminContext, a: Args) {
 
 async function jobsResume(ctx: AdminContext, a: Args) {
   const id = a.req('id');
-  const { job } = await jobs.resume(ctx, { id });
+  const concurrency = a.num('concurrency');
+  const { job } = await jobs.resume(ctx, {
+    id,
+    ...(concurrency !== undefined ? { concurrency } : {}),
+  });
   if (!a.bool('wait')) {
     out({ job });
     return;
@@ -225,6 +241,8 @@ Bulk ingestion (jobs):
     --concurrency <n>  Batches in flight at once (default 64, max 128)
     --limit <n>        Only the first N objects: a cheap sample of the corpus
     --wait             Block until the plan is ready (or, with --approve, until done)
+  On approve and resume:
+    --concurrency <n>  Batches in flight from here on (max 128); a plan made at 8 can run at 64
 
   While running, documents are read in batches of fifty with one embedding
   call per batch. Unchanged documents are skipped by content hash, so re-running
