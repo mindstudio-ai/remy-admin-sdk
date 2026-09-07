@@ -4,7 +4,7 @@
  * shapes in ../types/dataSources.js.
  *
  * CLI skin retains: fs reads with WORKSPACE_DIR-relative path resolution, the
- * ingest/revectorize wait loops with their exit codes, and progress printing.
+ * exit codes of the waits, and progress printing.
  */
 
 import fs from 'node:fs';
@@ -13,18 +13,19 @@ import path from 'node:path';
 import { type Args, type CommandSpec, type FlagSpec } from '../args.js';
 import { WORKSPACE_DIR } from '../config.js';
 import type { AdminContext } from '../ctx.js';
-import { EXIT, fatal } from '../errors.js';
+import { CliError, EXIT, fatal } from '../errors.js';
 import * as dataSources from '../ops/dataSources.js';
 import { out, progress } from '../output.js';
-import { sleep } from '../sleep.js';
 import type { Handler } from '../types.js';
 import type {
   DataSourcesIngestUpdate,
   DataSourcesRetrievalUpdate,
 } from '../types/dataSources.js';
-
-const DEFAULT_SOURCE = 'default';
-const POLL_MS = 3000;
+import { DEFAULT_SOURCE, sourceOf } from './_shared/dataSources.js';
+import { dataSourceConnectorsHelp } from './dataSourceConnectors.js';
+import { dataSourceEvalsHelp } from './dataSourceEvals.js';
+import { dataSourceJobsHelp } from './dataSourceJobs.js';
+import { dataSourceMappersHelp } from './dataSourceMappers.js';
 
 /**
  * Pipeline settings, shared by `config` and `revectorize` so the two can never
@@ -88,8 +89,18 @@ export const dataSourcesSpecs = {
     flags: { source: { type: 'string' } },
   },
   'datasources rm': {
-    usage: 'Usage: remy-admin datasources rm [--source <slug>] --document <id>',
-    flags: { source: { type: 'string' }, document: { type: 'string' } },
+    usage:
+      'Usage: remy-admin datasources rm [--source <slug>] (--document <id> | --filter <k=v,...|json>)',
+    flags: {
+      source: { type: 'string' },
+      document: { type: 'string' },
+      filter: { type: 'string' },
+    },
+    requireAnyOf: {
+      flags: ['document', 'filter'],
+      message:
+        'Say what to remove: --document <id> for one document, or --filter <k=v,...|json> for every document that matches.',
+    },
   },
   'datasources search': {
     usage:
@@ -170,8 +181,6 @@ export const dataSourcesSpecs = {
   },
 } satisfies Record<string, CommandSpec>;
 
-const sourceOf = (a: Args) => a.str('source') || DEFAULT_SOURCE;
-
 /**
  * Add one or more documents.
  *
@@ -218,32 +227,26 @@ async function dataSourcesAdd(ctx: AdminContext, a: Args) {
       : dataSources.DEFAULT_WAIT_TIMEOUT_MS;
     const result = await dataSources.waitForIngest(ctx, {
       slug,
-      documentIds: results.filter((r) => !r.skipped).map((r) => r.document.id),
+      // Every document the files became: a mapped source can make several
+      // from one file, or none (a deletes outcome).
+      documentIds: results
+        .filter((r) => !r.skipped)
+        .flatMap((r) => r.documents.map((d) => d.id)),
       timeoutMs,
       onProgress: progress,
     });
-    if (result.status === 'timeout') {
-      out({
-        dataSource: slug,
-        status: result.status,
-        error: result.error,
-        documents: result.documents,
-      });
-      process.exit(EXIT.timeout);
-    }
-    if (result.status === 'error') {
-      out({
-        dataSource: slug,
-        status: result.status,
-        documents: result.documents,
-      });
-      process.exit(EXIT.buildFailed);
-    }
     out({
       dataSource: slug,
       status: result.status,
+      ...(result.error ? { error: result.error } : {}),
       documents: result.documents,
     });
+    if (result.status === 'timeout') {
+      throw new CliError(result.error ?? 'Timed out.', EXIT.timeout);
+    }
+    if (result.status === 'error') {
+      throw new CliError('At least one document failed.', EXIT.buildFailed);
+    }
     return;
   }
 
@@ -265,11 +268,34 @@ async function dataSourcesStatus(ctx: AdminContext, a: Args) {
 
 async function dataSourcesRm(ctx: AdminContext, a: Args) {
   const documentId = a.str('document');
-  if (!documentId) {
-    fatal('--document is required.');
+  const rawFilter = a.str('filter');
+  if (documentId && rawFilter) {
+    fatal('Give --document or --filter, not both.');
   }
-  await dataSources.rm(ctx, { slug: sourceOf(a), documentId });
-  out({ deleted: documentId });
+  if (documentId) {
+    await dataSources.rm(ctx, { slug: sourceOf(a), documentId });
+    out({ deleted: documentId });
+    return;
+  }
+  // `key=value` pairs are metadata equality; a JSON object is the full
+  // selector (metadata, filename, documentIds, externalIdPrefix).
+  let filter: Record<string, unknown>;
+  if (rawFilter!.trimStart().startsWith('{')) {
+    try {
+      filter = JSON.parse(rawFilter!);
+    } catch (err: any) {
+      fatal(`--filter is not valid JSON: ${err.message}`);
+    }
+  } else {
+    filter = { metadata: parseKeyValuePairs(rawFilter, 'filter') };
+  }
+  const slug = sourceOf(a);
+  const result = await dataSources.rmWhereAll(ctx, {
+    slug,
+    filter: filter!,
+    onProgress: progress,
+  });
+  out({ dataSource: slug, filter, ...result });
 }
 
 /**
@@ -623,10 +649,10 @@ async function dataSourcesMove(ctx: AdminContext, a: Args) {
     ...('error' in result ? { error: result.error } : {}),
   });
   if (result.status === 'failed') {
-    process.exit(EXIT.buildFailed);
+    throw new CliError(result.error, EXIT.buildFailed);
   }
   if (result.status === 'timeout') {
-    process.exit(EXIT.timeout);
+    throw new CliError(result.error, EXIT.timeout);
   }
 }
 
@@ -652,50 +678,27 @@ async function dataSourcesRevectorize(ctx: AdminContext, a: Args) {
   }
 
   const timeoutSec = a.num('timeout');
-  const timeoutMs = timeoutSec
-    ? timeoutSec * 1000
-    : dataSources.DEFAULT_WAIT_TIMEOUT_MS;
-  const start = Date.now();
-
-  for (;;) {
-    const documents = await dataSources.allDocuments(ctx, {
-      slug,
-      candidate: true,
-    });
-    const pending = documents.filter((d) => d.status === 'processing');
-    const failed = documents.filter((d) => d.status === 'error');
-
-    if (pending.length === 0) {
-      out({
-        dataSource: slug,
-        candidateVersion: started.candidateVersion,
-        status: failed.length ? 'error' : 'ready',
-        documents: (documents ?? []).map(dataSources.summarize),
-        note: failed.length
-          ? 'Some documents failed. Promote with --force to accept, or fix and re-run.'
-          : 'Run `promote` to make this version live.',
-      });
-      if (failed.length) {
-        process.exit(EXIT.buildFailed);
-      }
-      return;
-    }
-
-    if (Date.now() - start > timeoutMs) {
-      out({
-        dataSource: slug,
-        status: 'timeout',
-        error: `Timed out after ${Math.round(timeoutMs / 1000)}s with ${pending.length} document(s) still building`,
-      });
-      process.exit(EXIT.timeout);
-    }
-
-    progress(
-      `rebuilding… ${documents.length - pending.length}/${documents.length} done (${Math.round(
-        (Date.now() - start) / 1000,
-      )}s)`,
-    );
-    await sleep(POLL_MS);
+  const result = await dataSources.waitForCandidate(ctx, {
+    slug,
+    ...(timeoutSec ? { timeoutMs: timeoutSec * 1000 } : {}),
+    onProgress: progress,
+  });
+  if (result.status === 'timeout') {
+    out({ dataSource: slug, status: 'timeout', error: result.error });
+    throw new CliError(result.error ?? 'Timed out.', EXIT.timeout);
+  }
+  out({
+    dataSource: slug,
+    candidateVersion: started.candidateVersion,
+    status: result.status,
+    documents: result.documents,
+    note:
+      result.status === 'error'
+        ? 'Some documents failed. Promote with --force to accept, or fix and re-run.'
+        : 'Run `promote` to make this version live.',
+  });
+  if (result.status === 'error') {
+    throw new CliError('At least one document failed.', EXIT.buildFailed);
   }
 }
 
@@ -742,11 +745,22 @@ Subcommands:
   add          Add one or more documents (skips unchanged files)
   list         List data sources with document counts
   status       Show per-document ingest state
-  rm           Remove a document and its vectors
+  rm           Remove a document, or every document matching a filter
   search       Query a corpus — useful to sanity-check one you just built
   create       Create an empty source, optionally on dedicated capacity
   config       Show or change how a corpus is processed and searched
   move         Move a corpus between shared and dedicated capacity, data intact
+  jobs         Bulk-load a corpus from a file store or a manifest, with a plan first
+  connect      Follow an S3 bucket the customer owns (credentials = app secret names)
+  sync         Bring a connected source up to date with its bucket
+  connector    Show a source's connector and what it tracks
+  disconnect   Stop following the bucket; documents stay
+  inspect      Profile raw objects (key shapes, types, sizes, JSON keys) before writing a mapper
+  map test     Run a source's mapper over real objects and show the outcomes; nothing ingested
+  remap        Re-apply the live mapper to every raw copy the source holds
+  hydrate      Reload an evicted index ahead of the first search
+  sample       Draw a sample of a source into a new one with the same config
+  eval         Query sets and runs: measure recall, MRR and latency, compare versions
   revectorize  Rebuild a corpus under new settings, alongside the live one
   promote      Make a rebuilt version live
   drop         Discard a candidate or a superseded version
@@ -756,11 +770,15 @@ Usage:
   remy-admin datasources add [--source <slug>] [--metadata <k=v,...>] [--wait] [--timeout <sec>] <file...>
   remy-admin datasources list
   remy-admin datasources status [--source <slug>]
-  remy-admin datasources rm [--source <slug>] --document <id>
+  remy-admin datasources rm [--source <slug>] (--document <id> | --filter <k=v,...|json>)
   remy-admin datasources search [--source <slug>] [search options] <query>
   remy-admin datasources create --source <slug> [--name <name>] [--placement <resource-id|shared>] [rebuild settings...]
   remy-admin datasources config [--source <slug>] [--placement <resource-id|shared>] [settings...]
   remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--wait] [--timeout <sec>]
+  remy-admin datasources jobs start|list|status|approve|pause|resume|cancel … (see below)
+  remy-admin datasources connect|sync|connector|disconnect … (see below)
+  remy-admin datasources hydrate|sample … (see below)
+  remy-admin datasources eval create|list|get|add|import|queries|rm|delete|run|runs|result|compare … (see below)
   remy-admin datasources revectorize [--source <slug>] [settings...] [--wait]
   remy-admin datasources promote [--source <slug>] [--force]
   remy-admin datasources drop [--source <slug>] [--version <n>]
@@ -853,6 +871,11 @@ Notes:
   Re-adding an unchanged file is free: no upload, no re-embedding. Re-adding
     with a different --metadata updates the tags in place, also free.
   --metadata tags documents for search-time filtering (scalars, ≤16 keys).
+  rm --filter removes every matching document in pages of a thousand: k=v
+    pairs match metadata; a JSON object takes the full selector — metadata,
+    filename, documentIds, externalIdPrefix (the key a job or connector
+    recorded, e.g. '{"externalIdPrefix":"archive/2019/"}'). An empty filter
+    is refused; to remove everything, delete the source.
   delete requires an explicit --source (no default) and refuses while documents
     are still ingesting. Extraction caches survive deletion, so re-ingesting
     the same files elsewhere costs no re-extraction.
@@ -870,4 +893,21 @@ Examples:
   remy-admin datasources revectorize --source policies --max-chars 900 --wait
   remy-admin datasources search --source policies --candidate "payment terms"
   remy-admin datasources promote --source policies
-`;
+
+  # Load a whole corpus: plan first, approve, watch it run
+  remy-admin datasources jobs start --source archive --store raw --prefix 2024/ --wait
+  remy-admin datasources jobs approve <id> --wait
+
+  # Follow a customer's bucket: secrets by name, first sync stops for approval
+  remy-admin secrets set ARCHIVE_S3_KEY --prod <value>      # never on a command line you share
+  remy-admin datasources connect --source archive --bucket acme-docs --region us-east-1 --prefix contracts/ --access-key-secret ARCHIVE_S3_KEY --secret-key-secret ARCHIVE_S3_SECRET --budget-per-sync 5
+  remy-admin datasources sync --source archive --wait
+
+  # Measure before you promote: sample, build a query set, run live vs candidate
+  remy-admin datasources sample --source archive --size 300 --wait
+  remy-admin datasources eval create --source archive-sample --name base --size 150 --wait
+  remy-admin datasources eval run --set <setId> --label live --wait
+  remy-admin datasources revectorize --source archive-sample --max-chars 900 --wait
+  remy-admin datasources eval run --set <setId> --candidate --label small-chunks --wait
+  remy-admin datasources eval compare <runA> <runB>
+${dataSourceJobsHelp}${dataSourceConnectorsHelp}${dataSourceMappersHelp}${dataSourceEvalsHelp}`;

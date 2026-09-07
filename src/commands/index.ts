@@ -37,6 +37,22 @@ import {
   dataSourcesHelp,
   dataSourcesSpecs,
 } from './dataSources.js';
+import {
+  dataSourceJobsHandlers,
+  dataSourceJobsSpecs,
+} from './dataSourceJobs.js';
+import {
+  dataSourceConnectorsHandlers,
+  dataSourceConnectorsSpecs,
+} from './dataSourceConnectors.js';
+import {
+  dataSourceEvalsHandlers,
+  dataSourceEvalsSpecs,
+} from './dataSourceEvals.js';
+import {
+  dataSourceMappersHandlers,
+  dataSourceMappersSpecs,
+} from './dataSourceMappers.js';
 import { voiceHandlers, voiceHelp, voiceSpecs } from './voice.js';
 import { agentHandlers, agentHelp, agentSpecs } from './agent.js';
 import { eventsHandlers, eventsHelp, eventsSpecs } from './events.js';
@@ -62,6 +78,10 @@ export const SPECS = {
   ...prerenderSpecs,
   ...filesSpecs,
   ...dataSourcesSpecs,
+  ...dataSourceJobsSpecs,
+  ...dataSourceConnectorsSpecs,
+  ...dataSourceEvalsSpecs,
+  ...dataSourceMappersSpecs,
   ...voiceSpecs,
   ...agentSpecs,
   ...eventsSpecs,
@@ -90,6 +110,10 @@ export const HANDLERS = {
   ...prerenderHandlers,
   ...filesHandlers,
   ...dataSourcesHandlers,
+  ...dataSourceJobsHandlers,
+  ...dataSourceConnectorsHandlers,
+  ...dataSourceEvalsHandlers,
+  ...dataSourceMappersHandlers,
   ...voiceHandlers,
   ...agentHandlers,
   ...eventsHandlers,

@@ -119,6 +119,16 @@ export function resolveRoute(argv: string[]): Route | { error: string } {
     };
   }
 
+  // And the nested datasources groups (jobs, eval, map).
+  if (
+    group === 'datasources' &&
+    (sub === 'jobs' || sub === 'eval' || sub === 'map')
+  ) {
+    return {
+      error: `Unknown subcommand: datasources ${sub} ${action ?? ''}. Run 'remy-admin datasources --help'`,
+    };
+  }
+
   // And for the nested email domain groups.
   if (group === 'email' && ['domains', 'inbound-domains'].includes(sub ?? '')) {
     return {

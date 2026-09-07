@@ -7,8 +7,8 @@
  */
 
 import type { AdminContext } from '../ctx.js';
-import { call, isTransientError, TRANSIENT_GRACE_MS } from '../http.js';
-import { sleep } from '../sleep.js';
+import { call } from '../http.js';
+import { elapsedSeconds, pollUntil, timedOut } from '../poll.js';
 import type {
   InfraGetResult,
   InfraListResult,
@@ -231,53 +231,38 @@ export async function waitForPhase(
 ): Promise<WaitForPhaseResult> {
   const timeoutMs = params.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
   const wanted = new Set<InfraPhase>(params.phases);
-  const start = Date.now();
-  // A provisioning wait runs for minutes, often through a tunnel; one gateway
-  // error is not an answer about the resource, so it is retried for a while.
-  let transientSince: number | null = null;
+  const arrived = (resource: InfraResource) =>
+    wanted.has(resource.phase) && (params.until?.(resource) ?? true);
 
-  for (;;) {
-    let resource: InfraResource;
-    try {
-      ({ resource } = await get(ctx, { id: params.id }));
-      transientSince = null;
-    } catch (err) {
-      if (!isTransientError(err)) {
-        throw err;
-      }
-      transientSince ??= Date.now();
-      if (Date.now() - transientSince > TRANSIENT_GRACE_MS) {
-        throw err;
-      }
-      params.onProgress?.(
-        `retrying after a gateway error… (${Math.round((Date.now() - start) / 1000)}s)`,
-      );
-      await sleep(POLL_MS);
-      continue;
-    }
-    if (wanted.has(resource.phase) && (params.until?.(resource) ?? true)) {
-      return { status: 'done', resource };
-    }
-    if (resource.phase === 'failed') {
-      return {
-        status: 'failed',
-        resource,
-        error:
-          resource.lastError ?? 'The platform could not complete the change.',
-      };
-    }
-    if (Date.now() - start > timeoutMs) {
-      return {
-        status: 'timeout',
-        resource,
-        error: `Timed out after ${Math.round(timeoutMs / 1000)}s; resource is still ${resource.phase}`,
-      };
-    }
-    params.onProgress?.(
-      `${resource.phase}${resource.detail ? ` · ${resource.detail}` : ''}${
-        resource.resizingTo ? ` · resizing to ${resource.resizingTo.label}` : ''
-      }… (${Math.round((Date.now() - start) / 1000)}s)`,
-    );
-    await sleep(POLL_MS);
+  const outcome = await pollUntil(
+    async () => (await get(ctx, { id: params.id })).resource,
+    (resource) => arrived(resource) || resource.phase === 'failed',
+    {
+      timeoutMs,
+      pollMs: POLL_MS,
+      describe: (resource, start) =>
+        `${resource.phase}${resource.detail ? ` · ${resource.detail}` : ''}${
+          resource.resizingTo
+            ? ` · resizing to ${resource.resizingTo.label}`
+            : ''
+        }… (${elapsedSeconds(start)}s)`,
+      onProgress: params.onProgress,
+    },
+  );
+  const resource = outcome.value;
+  if (!outcome.settled) {
+    return {
+      status: 'timeout',
+      resource,
+      error: timedOut(timeoutMs, `; resource is still ${resource.phase}`),
+    };
   }
+  if (arrived(resource)) {
+    return { status: 'done', resource };
+  }
+  return {
+    status: 'failed',
+    resource,
+    error: resource.lastError ?? 'The platform could not complete the change.',
+  };
 }

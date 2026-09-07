@@ -22,6 +22,10 @@ import * as crashes from './ops/crashes.js';
 import * as cron from './ops/cron.js';
 import * as data from './ops/data.js';
 import * as dataSources from './ops/dataSources.js';
+import * as dataSourceJobs from './ops/dataSourceJobs.js';
+import * as dataSourceConnectors from './ops/dataSourceConnectors.js';
+import * as dataSourceEvals from './ops/dataSourceEvals.js';
+import * as dataSourceMappers from './ops/dataSourceMappers.js';
 import * as db from './ops/db.js';
 import * as diagnostics from './ops/diagnostics.js';
 import * as domains from './ops/domains.js';
@@ -107,6 +111,10 @@ function buildClient(ctx: AdminContext) {
     cron: bindOps(cron, ctx),
     data: bindOps(data, ctx),
     dataSources: bindOps(dataSources, ctx),
+    dataSourceJobs: bindOps(dataSourceJobs, ctx),
+    dataSourceConnectors: bindOps(dataSourceConnectors, ctx),
+    dataSourceEvals: bindOps(dataSourceEvals, ctx),
+    dataSourceMappers: bindOps(dataSourceMappers, ctx),
     db: bindOps(db, ctx),
     diagnostics: bindOps(diagnostics, ctx),
     domains: bindOps(domains, ctx),

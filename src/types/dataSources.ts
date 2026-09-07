@@ -10,6 +10,11 @@
  * 204/empty responses surface as `{ ok: true; status: number }` (readBody in api.ts).
  */
 
+import type { DataSourceConnector } from './dataSourceConnectors.js';
+import type { DataSourcesHydration } from './dataSourceEvals.js';
+import type { DataSourceJob } from './dataSourceJobs.js';
+import type { DataSourceMapper } from './dataSourceMappers.js';
+
 /**
  * Chunking settings pinned at pipeline creation.
  * Any change requires a revectorize, not a config update.
@@ -156,6 +161,8 @@ export type DataSourcesUploadTokenResult =
   | {
       alreadyCurrent: true;
       document: DataSourcesDocument;
+      /** Mapped sources: every document this mapper version produced from the bytes. */
+      documents?: DataSourcesDocument[];
     }
   | {
       alreadyCurrent: false;
@@ -167,10 +174,20 @@ export type DataSourcesUploadTokenResult =
       };
     };
 
-/** POST /datasources/documents — confirm an uploaded document and queue a build. */
+/**
+ * POST /datasources/documents — confirm an uploaded object and queue its
+ * builds. On a mapped source the object is a raw copy and the mapper decides
+ * what it becomes: `documents` holds everything produced, `document` the first
+ * of them (null only for a `deletes` outcome).
+ */
 export interface DataSourcesDocumentConfirmResult {
-  document: DataSourcesDocument;
+  document: DataSourcesDocument | null;
+  documents: DataSourcesDocument[];
+  /** Whether any document was queued for a build. */
   queued: boolean;
+  outcome: 'unmapped' | 'documents' | 'passthrough' | 'deletes';
+  /** Documents removed or superseded as a result. */
+  removed: number;
 }
 
 /** Build progress counts used in several list and status shapes. */
@@ -235,6 +252,16 @@ export interface DataSourcesListEntry {
   placement: DataSourcesPlacement | null;
   /** A move in flight, or its last failure. */
   migration: DataSourcesMigration | null;
+  /** The bulk ingestion job in flight on this source, if any. */
+  job: DataSourceJob | null;
+  /** The S3 bucket this source follows, if it is connected to one. */
+  connector: DataSourceConnector | null;
+  /** An index reload in flight after an eviction, or its last failure. */
+  hydration: DataSourcesHydration | null;
+  /** The source this one was sampled from (`datasources sample`), or null. */
+  sampleOf: string | null;
+  /** The mapper the live release declares for this source, or null. */
+  mapper: DataSourceMapper | null;
   createdAt: string;
 }
 
@@ -395,4 +422,31 @@ export interface DataSourcesDeleteResult {
 export interface DataSourcesDocumentDeleteResult {
   ok: true;
   status: number;
+}
+
+/**
+ * Which documents a bulk removal selects: the row-level half of the search
+ * filter (`metadata`, `filename`, `documentIds`) plus `externalIdPrefix`, the
+ * identity a bulk job or connector recorded (a customer's key prefix, say).
+ * Chunk-level fields and an empty selector are refused.
+ */
+export interface DataSourcesDocumentSelector {
+  metadata?: Record<
+    string,
+    | string
+    | number
+    | boolean
+    | (string | number | boolean)[]
+    | { gte?: number; lte?: number }
+  >;
+  filename?: string | string[];
+  documentIds?: string[];
+  externalIdPrefix?: string;
+}
+
+/** POST /datasources/documents/delete-many — one page of up to 1,000. */
+export interface DataSourcesDocumentDeleteManyResult {
+  deleted: number;
+  /** Still matching after this page; call again while > 0. */
+  remaining: number;
 }

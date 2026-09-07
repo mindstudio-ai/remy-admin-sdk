@@ -11,8 +11,8 @@
 import { createHash } from 'node:crypto';
 
 import type { AdminContext } from '../ctx.js';
-import { call, isTransientError, qs, TRANSIENT_GRACE_MS } from '../http.js';
-import { sleep } from '../sleep.js';
+import { call, qs } from '../http.js';
+import { elapsedSeconds, pollUntil, timedOut } from '../poll.js';
 import { uploadDirect } from '../upload.js';
 import type {
   DataSourcesConfigResult,
@@ -21,7 +21,9 @@ import type {
   DataSourcesDeleteResult,
   DataSourcesDocument,
   DataSourcesDocumentConfirmResult,
+  DataSourcesDocumentDeleteManyResult,
   DataSourcesDocumentDeleteResult,
+  DataSourcesDocumentSelector,
   DataSourcesDocumentsResult,
   DataSourcesDocumentStatus,
   DataSourcesDropResult,
@@ -85,7 +87,15 @@ export interface AddDocumentResult {
   filename: string;
   skipped: boolean;
   queued?: boolean;
-  document: DataSourcesDocument;
+  /**
+   * The document, or the first of them on a mapped source. Null only when the
+   * source's mapper answered `deletes` for the file.
+   */
+  document: DataSourcesDocument | null;
+  /** Every document the file became — one on an unmapped source. */
+  documents: DataSourcesDocument[];
+  /** How the source took the file; absent when it was already current. */
+  outcome?: 'unmapped' | 'documents' | 'passthrough' | 'deletes';
 }
 
 /**
@@ -127,7 +137,12 @@ export async function addDocument(
 
   if (token.alreadyCurrent) {
     onProgress?.(`${filename}: unchanged, skipped`);
-    return { filename, skipped: true, document: token.document };
+    return {
+      filename,
+      skipped: true,
+      document: token.document,
+      documents: token.documents ?? [token.document],
+    };
   }
 
   onProgress?.(
@@ -154,6 +169,9 @@ export async function addDocument(
     skipped: false,
     queued: confirmed.queued,
     document: confirmed.document,
+    documents:
+      confirmed.documents ?? (confirmed.document ? [confirmed.document] : []),
+    outcome: confirmed.outcome,
   };
 }
 
@@ -211,57 +229,96 @@ export async function waitForIngest(
   }
 
   const wanted = new Set(documentIds);
-  const start = Date.now();
-  // A wait can run for minutes through a tunnel; one gateway error is not an
-  // answer about the documents, so it is retried for a while before it counts.
-  let transientSince: number | null = null;
+  const pendingOf = (docs: DataSourcesDocumentStatus[]) =>
+    docs.filter((d) => d.status === 'processing');
 
-  for (;;) {
-    let docs: DataSourcesDocumentStatus[] | undefined;
-    try {
+  const outcome = await pollUntil(
+    async () => {
       // Only the documents being waited on: the source may hold millions.
-      docs = await allDocuments(ctx, { slug, ids: documentIds });
-      transientSince = null;
-    } catch (err) {
-      if (!isTransientError(err)) {
-        throw err;
-      }
-      transientSince ??= Date.now();
-      if (Date.now() - transientSince > TRANSIENT_GRACE_MS) {
-        throw err;
-      }
-      onProgress?.(
-        `retrying after a gateway error… (${Math.round((Date.now() - start) / 1000)}s)`,
-      );
-      await sleep(POLL_MS);
-      continue;
-    }
-    const tracked = (docs ?? []).filter((d) => wanted.has(d.id));
-    const pending = tracked.filter((d) => d.status === 'processing');
-    const failed = tracked.filter((d) => d.status === 'error');
-
-    if (pending.length === 0) {
-      return {
-        status: failed.length ? 'error' : 'done',
-        documents: tracked.map(summarize),
-      };
-    }
-
-    if (Date.now() - start > timeoutMs) {
-      return {
-        status: 'timeout',
-        documents: tracked.map(summarize),
-        error: `Timed out after ${Math.round(timeoutMs / 1000)}s with ${pending.length} document(s) still processing`,
-      };
-    }
-
-    onProgress?.(
-      `ingesting… ${tracked.length - pending.length}/${tracked.length} done (${Math.round(
-        (Date.now() - start) / 1000,
-      )}s)`,
-    );
-    await sleep(POLL_MS);
+      const docs = await allDocuments(ctx, { slug, ids: documentIds });
+      return (docs ?? []).filter((d) => wanted.has(d.id));
+    },
+    (tracked) => pendingOf(tracked).length === 0,
+    {
+      timeoutMs,
+      pollMs: POLL_MS,
+      describe: (tracked, start) =>
+        `ingesting… ${tracked.length - pendingOf(tracked).length}/${tracked.length} done (${elapsedSeconds(start)}s)`,
+      onProgress,
+    },
+  );
+  const tracked = outcome.value;
+  if (!outcome.settled) {
+    return {
+      status: 'timeout',
+      documents: tracked.map(summarize),
+      error: timedOut(
+        timeoutMs,
+        `with ${pendingOf(tracked).length} document(s) still processing`,
+      ),
+    };
   }
+  return {
+    status: tracked.some((d) => d.status === 'error') ? 'error' : 'done',
+    documents: tracked.map(summarize),
+  };
+}
+
+// ─── waitForCandidate ─────────────────────────────────────────────────────────
+
+export interface WaitForCandidateParams {
+  slug: string;
+  /** Defaults to DEFAULT_WAIT_TIMEOUT_MS (15 min). */
+  timeoutMs?: number;
+  /** Receives `rebuilding… X/Y done (Ns)`. */
+  onProgress?: (message: string) => void;
+}
+
+export interface WaitForCandidateResult {
+  status: 'ready' | 'error' | 'timeout';
+  documents: SummarizedDocument[];
+  /** Present only on status === 'timeout'. */
+  error?: string;
+}
+
+/**
+ * Poll a candidate version (`revectorize`) until every document has built.
+ * `error` means at least one failed; `promote` with `force` accepts that.
+ */
+export async function waitForCandidate(
+  ctx: AdminContext,
+  params: WaitForCandidateParams,
+): Promise<WaitForCandidateResult> {
+  const timeoutMs = params.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
+  const pendingOf = (docs: DataSourcesDocumentStatus[]) =>
+    docs.filter((d) => d.status === 'processing');
+
+  const outcome = await pollUntil(
+    () => allDocuments(ctx, { slug: params.slug, candidate: true }),
+    (docs) => pendingOf(docs).length === 0,
+    {
+      timeoutMs,
+      pollMs: POLL_MS,
+      describe: (docs, start) =>
+        `rebuilding… ${docs.length - pendingOf(docs).length}/${docs.length} done (${elapsedSeconds(start)}s)`,
+      onProgress: params.onProgress,
+    },
+  );
+  const docs = outcome.value;
+  if (!outcome.settled) {
+    return {
+      status: 'timeout',
+      documents: docs.map(summarize),
+      error: timedOut(
+        timeoutMs,
+        `with ${pendingOf(docs).length} document(s) still building`,
+      ),
+    };
+  }
+  return {
+    status: docs.some((d) => d.status === 'error') ? 'error' : 'ready',
+    documents: docs.map(summarize),
+  };
 }
 
 // ─── documents ───────────────────────────────────────────────────────────────
@@ -602,53 +659,40 @@ export async function waitForMove(
   params: WaitForMoveParams,
 ): Promise<WaitForMoveResult> {
   const timeoutMs = params.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
-  const start = Date.now();
-  let transientSince: number | null = null;
-
-  for (;;) {
-    let source: DataSourcesListEntry | undefined;
-    try {
+  const outcome = await pollUntil(
+    async () => {
       const { dataSources } = await list(ctx);
-      source = dataSources.find((s) => s.slug === params.slug);
-      transientSince = null;
-    } catch (err) {
-      if (!isTransientError(err)) {
-        throw err;
+      const source = dataSources.find((s) => s.slug === params.slug);
+      if (!source) {
+        throw new Error(`Data source "${params.slug}" not found.`);
       }
-      transientSince ??= Date.now();
-      if (Date.now() - transientSince > TRANSIENT_GRACE_MS) {
-        throw err;
-      }
-      params.onProgress?.(
-        `retrying after a gateway error… (${Math.round((Date.now() - start) / 1000)}s)`,
-      );
-      await sleep(POLL_MS);
-      continue;
-    }
-    if (!source) {
-      throw new Error(`Data source "${params.slug}" not found.`);
-    }
-    const migration = source.migration;
-    if (!migration) {
-      return { status: 'done', source };
-    }
-    if (migration.error) {
-      return { status: 'failed', source, error: migration.error };
-    }
-    if (Date.now() - start > timeoutMs) {
-      return {
-        status: 'timeout',
-        source,
-        error: `Timed out after ${Math.round(timeoutMs / 1000)}s with ${migration.copied}/${migration.total} documents copied`,
-      };
-    }
-    params.onProgress?.(
-      `moving… ${migration.copied}/${migration.total} documents (${Math.round(
-        (Date.now() - start) / 1000,
-      )}s)`,
-    );
-    await sleep(POLL_MS);
+      return source;
+    },
+    (source) => !source.migration || source.migration.error !== null,
+    {
+      timeoutMs,
+      pollMs: POLL_MS,
+      describe: (source, start) =>
+        `moving… ${source.migration!.copied}/${source.migration!.total} documents (${elapsedSeconds(start)}s)`,
+      onProgress: params.onProgress,
+    },
+  );
+  const source = outcome.value;
+  const migration = source.migration;
+  if (!outcome.settled) {
+    return {
+      status: 'timeout',
+      source,
+      error: timedOut(
+        timeoutMs,
+        `with ${migration!.copied}/${migration!.total} documents copied`,
+      ),
+    };
   }
+  if (migration?.error) {
+    return { status: 'failed', source, error: migration.error };
+  }
+  return { status: 'done', source };
 }
 
 // ─── revectorize ──────────────────────────────────────────────────────────────
@@ -785,6 +829,52 @@ export function rm(ctx: AdminContext, params: RmParams) {
       documentId: params.documentId,
     },
   );
+}
+
+// ─── rmWhere (documents by filter) ───────────────────────────────────────────
+
+export interface RmWhereParams {
+  /** Data source slug. */
+  slug: string;
+  filter: DataSourcesDocumentSelector;
+}
+
+/**
+ * Remove one page (up to 1,000) of the documents matching a selector, across
+ * every pipeline version, and report how many still match. Loop while
+ * `remaining > 0`; `rmWhereAll` does that.
+ *
+ * @throws AdminApiError `data_source_not_found` (404), `invalid_filter` (400),
+ *   `data_source_busy` (422) while a job is in flight, `data_source_migrating`
+ *   (422) during a move.
+ * @example
+ * await admin.dataSources.rmWhere({ slug: 'archive', filter: { metadata: { year: 2019 } } });
+ */
+export function rmWhere(ctx: AdminContext, params: RmWhereParams) {
+  return call<DataSourcesDocumentDeleteManyResult>(
+    ctx,
+    'POST',
+    `${base(ctx.appId)}/documents/delete-many`,
+    { slug: params.slug, filter: params.filter },
+  );
+}
+
+/** `rmWhere` until nothing matches. Reports each page through `onProgress`. */
+export async function rmWhereAll(
+  ctx: AdminContext,
+  params: RmWhereParams & { onProgress?: (message: string) => void },
+): Promise<{ deleted: number }> {
+  let deleted = 0;
+  while (true) {
+    const page = await rmWhere(ctx, params);
+    deleted += page.deleted;
+    if (page.remaining === 0 || page.deleted === 0) {
+      return { deleted };
+    }
+    params.onProgress?.(
+      `removed ${deleted.toLocaleString()} so far, ${page.remaining.toLocaleString()} remaining…`,
+    );
+  }
 }
 
 // ─── deleteSource ─────────────────────────────────────────────────────────────
