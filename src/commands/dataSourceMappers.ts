@@ -1,7 +1,8 @@
 /**
- * CLI skin for data-source mappers: inspect raw objects, test a mapper, remap
- * after a fix, read and replay a job's quarantine. Operations live in
- * ../ops/dataSourceMappers.js; response shapes in ../types/dataSourceMappers.js.
+ * CLI skin for data-source mappers: inspect raw objects, test a mapper, make a
+ * build's mapper the source's active one, remap after a fix, read and replay a
+ * job's quarantine. Operations live in ../ops/dataSourceMappers.js; response
+ * shapes in ../types/dataSourceMappers.js.
  */
 
 import { type Args, type CommandSpec } from '../args.js';
@@ -49,6 +50,14 @@ export const dataSourceMappersSpecs = {
       flags: ['store', 'connector'],
       message:
         "Name the objects: --store <name> [--prefix <p>], or --connector for the source's bucket.",
+    },
+  },
+  'datasources map deploy': {
+    usage:
+      'Usage: remy-admin datasources map deploy [--source <slug>] [--release <id>]',
+    flags: {
+      source: { type: 'string' },
+      release: { type: 'string' },
     },
   },
   'datasources remap': {
@@ -185,8 +194,8 @@ async function mapTest(ctx: AdminContext, a: Args) {
     ...result,
     results,
     note: result.dev
-      ? 'Ran the LOCAL mapper through the dev session. Nothing was ingested; deploy to make it live.'
-      : "Ran the live release's mapper. Nothing was ingested.",
+      ? "Ran the LOCAL mapper through the dev session. Nothing was ingested; push a branch, wait for its build, then `datasources map deploy` to make it the source's mapper."
+      : "Ran the source's active mapper. Nothing was ingested.",
   });
   if (result.counts.error > 0) {
     throw new CliError(
@@ -194,6 +203,25 @@ async function mapTest(ctx: AdminContext, a: Args) {
       EXIT.buildFailed,
     );
   }
+}
+
+async function mapDeploy(ctx: AdminContext, a: Args) {
+  const slug = sourceOf(a);
+  const releaseId = a.str('release');
+  const result = await mappers.mapDeploy(ctx, {
+    slug,
+    ...(releaseId ? { releaseId } : {}),
+  });
+  const { mapper } = result;
+  const from = `${mapper.branch ?? 'release'} @ ${(mapper.commitSha ?? '').slice(0, 7)}`;
+  out({
+    dataSource: slug,
+    mapper,
+    changed: result.changed,
+    note: result.changed
+      ? `Active: the mapper compiled by ${from}. Jobs, syncs and add() run it from now on; \`remap\` re-applies it to what is already loaded.`
+      : `Already active: the mapper compiled by ${from}. Nothing changed.`,
+  });
 }
 
 async function remap(ctx: AdminContext, a: Args) {
@@ -239,7 +267,7 @@ async function quarantine(ctx: AdminContext, a: Args) {
     note:
       result.counts.skipped + result.counts.errors === 0
         ? 'Nothing quarantined: the mapper produced documents (or deletions) for every object.'
-        : `Fix the mapper, deploy, then \`datasources jobs replay ${id}\` to run these through it again.`,
+        : `Fix the mapper, push, \`datasources map deploy\`, then \`datasources jobs replay ${id}\` to run these through it again.`,
   });
 }
 
@@ -271,6 +299,7 @@ async function replay(ctx: AdminContext, a: Args) {
 export const dataSourceMappersHandlers = {
   'datasources inspect': inspect,
   'datasources map test': mapTest,
+  'datasources map deploy': mapDeploy,
   'datasources remap': remap,
   'datasources jobs quarantine': quarantine,
   'datasources jobs replay': replay,
@@ -281,6 +310,7 @@ export const dataSourceMappersHelp = `
 Mapping raw objects into documents (mappers):
   remy-admin datasources inspect [--source <slug>] (--store <name> [--prefix <p>] | --connector) [--keys k1,k2] [--limit <n>]
   remy-admin datasources map test [--source <slug>] (--store <name> [--prefix <p>] | --connector) [--keys k1,k2] [--limit <n>] [--dev] [--full]
+  remy-admin datasources map deploy [--source <slug>] [--release <id>]
   remy-admin datasources remap [--source <slug>] [--budget <dollars>] [--limit <n>] [--wait] [--timeout <sec>]
   remy-admin datasources jobs quarantine <id> [--kind skip|error] [--reason <text>] [--cursor <id>] [--limit <n>]
   remy-admin datasources jobs replay <id> [--kind skip|error] [--wait] [--timeout <sec>]
@@ -302,11 +332,18 @@ Mapping raw objects into documents (mappers):
   JSON key signatures of ten sampled heads) before a line is written;
   \`map test --dev\` runs the LOCAL mapper through the running dev session
   over real objects and prints every outcome without ingesting anything;
-  deploy; a job or sync runs the compiled mapper; \`jobs quarantine <id>\`
-  lists what it skipped or failed on, by reason; fix, deploy, \`jobs replay
-  <id>\` runs just those objects again; \`remap\` re-applies a changed mapper
-  to every raw copy the source holds — no origin traffic, unchanged markdown
-  skipped by hash, changed documents superseding their predecessors.
+  push a branch and wait for its build (\`releases wait\`) — a mapper runs on
+  the platform, so the platform has to compile it, and a private branch
+  build is all it needs; \`map deploy\` makes that build's mapper the
+  source's active one (publishing to main activates the mapper main declares
+  too, so merge the branch before publishing); a job or sync runs it; \`jobs
+  quarantine <id>\` lists what it skipped or failed on, by reason; fix, push,
+  \`map deploy\`, \`jobs replay <id>\` runs just those objects again; \`remap\`
+  re-applies a changed mapper to every raw copy the source holds — no origin
+  traffic, unchanged markdown skipped by hash, changed documents superseding
+  their predecessors. \`jobs start\` refuses (mapper_not_deployed) while the
+  dev session declares a mapper that is not yet active: the job would have
+  loaded the raw records as documents.
 
   externalId is the identity the platform replaces by: a later object
   producing the same id supersedes the earlier document; \`replaces\` names

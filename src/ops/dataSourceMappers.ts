@@ -1,7 +1,8 @@
 /**
  * Data-source mappers: the loop around customer code that turns raw objects
- * into documents — inspect the objects, test the mapper, remap after a fix,
- * read and replay what a job quarantined.
+ * into documents — inspect the objects, test the mapper, make a build's mapper
+ * the source's active one, remap after a fix, read and replay what a job
+ * quarantined.
  *
  * Ops are pure (ctx, params) → typed result. The CLI skin in
  * commands/dataSourceMappers.ts owns flags, progress and exit codes.
@@ -11,6 +12,7 @@ import type { AdminContext } from '../ctx.js';
 import { call, qs } from '../http.js';
 import type {
   DataSourceInspectResult,
+  DataSourceMapDeployResult,
   DataSourceMapTestResult,
   DataSourceQuarantineResult,
   DataSourceRemapResult,
@@ -114,8 +116,41 @@ export interface RemapParams {
   limit?: number;
 }
 
+// ─── deploy ──────────────────────────────────────────────────────────────────
+
+export interface MapDeployParams {
+  slug: string;
+  /**
+   * The release to take the mapper from. Default: the newest built release —
+   * live or the head of any branch — that carries a compiled mapper for the
+   * slug.
+   */
+  releaseId?: string;
+}
+
 /**
- * Run the live mapper over every raw object the source holds a copy of.
+ * Make a built release's compiled mapper the source's active mapper — what
+ * jobs, syncs and `add()` run from now on. A branch build is enough: the app
+ * need never have been published. Publishing to main also activates the
+ * mapper main declares. Idempotent (`changed: false` when already active).
+ *
+ * @throws AdminApiError `no_built_mapper` (422) when no build carries a
+ *   compiled mapper for the slug, `release_not_found` (404).
+ */
+export function mapDeploy(ctx: AdminContext, params: MapDeployParams) {
+  return call<DataSourceMapDeployResult>(
+    ctx,
+    'POST',
+    `${base(ctx.appId)}/mapper/deploy`,
+    {
+      slug: params.slug,
+      ...(params.releaseId ? { releaseId: params.releaseId } : {}),
+    },
+  );
+}
+
+/**
+ * Run the active mapper over every raw object the source holds a copy of.
  * Auto-approved: unchanged markdown is skipped by hash, so a remap after a
  * metadata tweak costs frames and little else. Block on the job with
  * `dataSourceJobs.waitForJob`.

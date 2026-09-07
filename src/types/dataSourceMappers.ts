@@ -9,12 +9,29 @@
 
 import type { DataSourceJob } from './dataSourceJobs.js';
 
-/** The mapper a source runs: the file it was compiled from and its version. */
+/**
+ * The mapper a source runs: the file it was compiled from, its version, and
+ * the build it came from. The build fields are null for a tunnel run of local
+ * source (`map test --dev`).
+ */
 export interface DataSourceMapper {
   path: string;
   /** The compiled bundle key, or `dev:<sessionId>` for a tunnel run; stamped on the documents it produces. */
   mapperKey: string;
   timeoutMs: number;
+  releaseId: string | null;
+  branch: string | null;
+  commitSha: string | null;
+  /** When this bundle became the source's active mapper. */
+  activatedAt: string | null;
+}
+
+/** POST /datasources/mapper/deploy */
+export interface DataSourceMapDeployResult {
+  dataSource: { id: string; slug: string };
+  mapper: DataSourceMapper;
+  /** False when the source already ran this bundle. */
+  changed: boolean;
 }
 
 /** Which objects an inspect or map test looked at. */

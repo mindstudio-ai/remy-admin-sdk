@@ -757,7 +757,8 @@ Subcommands:
   disconnect   Stop following the bucket; documents stay
   inspect      Profile raw objects (key shapes, types, sizes, JSON keys) before writing a mapper
   map test     Run a source's mapper over real objects and show the outcomes; nothing ingested
-  remap        Re-apply the live mapper to every raw copy the source holds
+  map deploy   Make a build's compiled mapper the source's active one (a branch build will do)
+  remap        Re-apply the active mapper to every raw copy the source holds
   hydrate      Reload an evicted index ahead of the first search
   sample       Draw a sample of a source into a new one with the same config
   eval         Query sets and runs: measure recall, MRR and latency, compare versions
