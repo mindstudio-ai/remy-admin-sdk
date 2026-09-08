@@ -125,6 +125,8 @@ export interface SyncParams {
   limit?: number;
   /** Batches in flight (default 64, max 128). */
   concurrency?: number;
+  /** Embed at the provider's priority tier (1.5x the embedding price). Off by default. */
+  priority?: boolean;
 }
 
 /**
@@ -145,5 +147,6 @@ export function sync(ctx: AdminContext, params: SyncParams) {
     ...(params.concurrency !== undefined
       ? { concurrency: params.concurrency }
       : {}),
+    ...(params.priority ? { priority: true } : {}),
   });
 }

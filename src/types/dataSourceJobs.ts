@@ -122,6 +122,8 @@ export interface DataSourceJob {
   budgetCredits: number | null;
   budgetDollars: number | null;
   maxInflightBatches: number;
+  /** Embedding at the provider's priority tier (1.5x the embedding price). */
+  priority: boolean;
   limitObjects: number | null;
   enumerationDone: boolean;
   counts: {

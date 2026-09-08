@@ -40,6 +40,11 @@ export interface StartParams {
   budgetDollars?: number;
   /** Batches in flight at once (default 64, max 128). */
   concurrency?: number;
+  /**
+   * Embed at the provider's priority tier: calls are admitted ahead of the
+   * provider's queue at 1.5x the embedding price. Off by default.
+   */
+  priority?: boolean;
   /** Process only the first N objects — a sample of the corpus. */
   limit?: number;
 }
@@ -58,13 +63,15 @@ export interface StartParams {
  * });
  */
 export function start(ctx: AdminContext, params: StartParams) {
-  const { slug, source, approve, budgetDollars, concurrency, limit } = params;
+  const { slug, source, approve, budgetDollars, concurrency, priority, limit } =
+    params;
   return call<DataSourceJobResult>(ctx, 'POST', base(ctx.appId), {
     slug,
     source,
     ...(approve ? { approve: true } : {}),
     ...(budgetDollars !== undefined ? { budgetDollars } : {}),
     ...(concurrency !== undefined ? { concurrency } : {}),
+    ...(priority ? { priority: true } : {}),
     ...(limit !== undefined ? { limit } : {}),
   });
 }
@@ -139,16 +146,30 @@ export function approve(
   params: JobIdParams & {
     /** Batches in flight from here on (max 128); the plan was made at the job's current value. */
     concurrency?: number;
+    /** Embed at the provider's priority tier from here on (1.5x the embedding price). */
+    priority?: boolean;
   },
 ) {
   return call<DataSourceJobResult>(
     ctx,
     'POST',
     `${base(ctx.appId)}/${encodeURIComponent(params.id)}/approve`,
-    params.concurrency !== undefined
-      ? { concurrency: params.concurrency }
-      : undefined,
+    controlBody(params),
   );
+}
+
+/** The optional knobs approve and resume share; undefined when none is set. */
+function controlBody(params: {
+  concurrency?: number;
+  priority?: boolean;
+}): Record<string, unknown> | undefined {
+  const body = {
+    ...(params.concurrency !== undefined
+      ? { concurrency: params.concurrency }
+      : {}),
+    ...(params.priority !== undefined ? { priority: params.priority } : {}),
+  };
+  return Object.keys(body).length > 0 ? body : undefined;
 }
 
 /** Stop dispatching batches; the ones in flight finish. */
@@ -166,15 +187,15 @@ export function resume(
   params: JobIdParams & {
     /** Batches in flight from here on (max 128). */
     concurrency?: number;
+    /** Embed at the provider's priority tier from here on (1.5x the embedding price). */
+    priority?: boolean;
   },
 ) {
   return call<DataSourceJobResult>(
     ctx,
     'POST',
     `${base(ctx.appId)}/${encodeURIComponent(params.id)}/resume`,
-    params.concurrency !== undefined
-      ? { concurrency: params.concurrency }
-      : undefined,
+    controlBody(params),
   );
 }
 

@@ -20,7 +20,7 @@ import { sourceOf, waitAndReport } from './_shared/dataSources.js';
 export const dataSourceJobsSpecs = {
   'datasources jobs start': {
     usage:
-      'Usage: remy-admin datasources jobs start [--source <slug>] (--store <name> [--access <private|public>] [--prefix <p>] | --manifest <file.jsonl>) [--limit <n>] [--budget <dollars>] [--concurrency <n>] [--approve] [--wait] [--timeout <sec>]',
+      'Usage: remy-admin datasources jobs start [--source <slug>] (--store <name> [--access <private|public>] [--prefix <p>] | --manifest <file.jsonl>) [--limit <n>] [--budget <dollars>] [--concurrency <n>] [--priority] [--approve] [--wait] [--timeout <sec>]',
     flags: {
       source: { type: 'string' },
       store: { type: 'string' },
@@ -30,6 +30,7 @@ export const dataSourceJobsSpecs = {
       limit: { type: 'number', min: 1 },
       budget: { type: 'number', min: 0.01 },
       concurrency: { type: 'number', min: 1 },
+      priority: { type: 'boolean' },
       approve: { type: 'boolean' },
       wait: { type: 'boolean' },
       timeout: { type: 'string' },
@@ -52,10 +53,11 @@ export const dataSourceJobsSpecs = {
   },
   'datasources jobs approve': {
     usage:
-      'Usage: remy-admin datasources jobs approve <id> [--concurrency <n>] [--wait] [--timeout <sec>]',
+      'Usage: remy-admin datasources jobs approve <id> [--concurrency <n>] [--priority] [--wait] [--timeout <sec>]',
     positionals: [{ name: 'id', required: true }],
     flags: {
       concurrency: { type: 'number', min: 1 },
+      priority: { type: 'boolean' },
       wait: { type: 'boolean' },
       timeout: { type: 'string' },
     },
@@ -66,10 +68,11 @@ export const dataSourceJobsSpecs = {
   },
   'datasources jobs resume': {
     usage:
-      'Usage: remy-admin datasources jobs resume <id> [--concurrency <n>] [--wait] [--timeout <sec>]',
+      'Usage: remy-admin datasources jobs resume <id> [--concurrency <n>] [--priority] [--wait] [--timeout <sec>]',
     positionals: [{ name: 'id', required: true }],
     flags: {
       concurrency: { type: 'number', min: 1 },
+      priority: { type: 'boolean' },
       wait: { type: 'boolean' },
       timeout: { type: 'string' },
     },
@@ -124,6 +127,7 @@ async function jobsStart(ctx: AdminContext, a: Args) {
     ...(a.bool('approve') ? { approve: true } : {}),
     ...(budget !== undefined ? { budgetDollars: budget } : {}),
     ...(concurrency !== undefined ? { concurrency } : {}),
+    ...(a.bool('priority') ? { priority: true } : {}),
     ...(limit !== undefined ? { limit } : {}),
   });
 
@@ -167,6 +171,7 @@ async function jobsApprove(ctx: AdminContext, a: Args) {
   const { job } = await jobs.approve(ctx, {
     id,
     ...(concurrency !== undefined ? { concurrency } : {}),
+    ...(a.bool('priority') ? { priority: true } : {}),
   });
   if (!a.bool('wait')) {
     out({
@@ -188,6 +193,7 @@ async function jobsResume(ctx: AdminContext, a: Args) {
   const { job } = await jobs.resume(ctx, {
     id,
     ...(concurrency !== undefined ? { concurrency } : {}),
+    ...(a.bool('priority') ? { priority: true } : {}),
   });
   if (!a.bool('wait')) {
     out({ job });
@@ -239,10 +245,14 @@ Bulk ingestion (jobs):
     --approve          Run as soon as the plan passes the gates, no separate approve
     --budget <dollars> Pause when estimated spend reaches this (default 1.5x the plan)
     --concurrency <n>  Batches in flight at once (default 64, max 128)
+    --priority         Embed at the provider's priority tier: calls skip the
+                       provider's queue at 1.5x the embedding price. For the
+                       load where the clock matters more than the price.
     --limit <n>        Only the first N objects: a cheap sample of the corpus
     --wait             Block until the plan is ready (or, with --approve, until done)
   On approve and resume:
     --concurrency <n>  Batches in flight from here on (max 128); a plan made at 8 can run at 64
+    --priority         Priority-tier embedding from here on (1.5x); pause and resume to change it
 
   While running, documents are read in batches of fifty with one embedding
   call per batch. Unchanged documents are skipped by content hash, so re-running
