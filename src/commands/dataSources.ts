@@ -85,8 +85,13 @@ export const dataSourcesSpecs = {
     usage: 'Usage: remy-admin datasources list',
   },
   'datasources status': {
-    usage: 'Usage: remy-admin datasources status [--source <slug>]',
-    flags: { source: { type: 'string' } },
+    usage:
+      'Usage: remy-admin datasources status [--source <slug>] [--status error] [--all]',
+    flags: {
+      source: { type: 'string' },
+      status: { type: 'string' },
+      all: { type: 'boolean' },
+    },
   },
   'datasources rm': {
     usage:
@@ -257,12 +262,53 @@ async function dataSourcesList(ctx: AdminContext) {
   out(await dataSources.list(ctx));
 }
 
+/**
+ * A source's counts and its failures. The counts come from the source row,
+ * whatever the corpus holds; the failures are the first page of them, newest
+ * first. `--all` walks every document instead — thousands of pages on a large
+ * source — and `--status error` narrows the walk to the failures.
+ */
 async function dataSourcesStatus(ctx: AdminContext, a: Args) {
   const slug = sourceOf(a);
-  const documents = await dataSources.allDocuments(ctx, { slug });
+  const status = a.str('status');
+  if (status !== undefined && status !== 'error') {
+    fatal("--status can only be 'error'.");
+  }
+  if (a.bool('all')) {
+    const documents = await dataSources.allDocuments(ctx, {
+      slug,
+      ...(status ? { status: 'error' as const } : {}),
+    });
+    out({
+      dataSource: slug,
+      documents: documents.map(dataSources.summarize),
+    });
+    return;
+  }
+  const { dataSources: sources } = await dataSources.list(ctx);
+  const source = sources.find((s) => s.slug === slug);
+  if (!source) {
+    out({ dataSource: slug, exists: false });
+    return;
+  }
+  const failures =
+    status === 'error' || source.counts.error > 0
+      ? await dataSources.documents(ctx, {
+          slug,
+          status: 'error',
+          limit: dataSources.FAILURES_PAGE,
+        })
+      : null;
   out({
     dataSource: slug,
-    documents: documents.map(dataSources.summarize),
+    counts: source.counts,
+    chunkCount: source.chunkCount,
+    lastIngestedAt: source.lastIngestedAt,
+    activeVersion: source.activeVersion,
+    candidate: source.candidate,
+    job: source.job,
+    failures: (failures?.documents ?? []).map(dataSources.summarize),
+    moreFailures: !!failures?.nextCursor,
   });
 }
 
@@ -691,7 +737,8 @@ async function dataSourcesRevectorize(ctx: AdminContext, a: Args) {
     dataSource: slug,
     candidateVersion: started.candidateVersion,
     status: result.status,
-    documents: result.documents,
+    counts: result.counts,
+    failures: result.documents,
     note:
       result.status === 'error'
         ? 'Some documents failed. Promote with --force to accept, or fix and re-run.'
@@ -744,7 +791,7 @@ matching passages with a citation pointing back at the source document.
 Subcommands:
   add          Add one or more documents (skips unchanged files)
   list         List data sources with document counts
-  status       Show per-document ingest state
+  status       Show a source's counts and its failed documents (--all walks every document)
   rm           Remove a document, or every document matching a filter
   search       Query a corpus — useful to sanity-check one you just built
   create       Create an empty source, optionally on dedicated capacity
@@ -771,7 +818,7 @@ Subcommands:
 Usage:
   remy-admin datasources add [--source <slug>] [--metadata <k=v,...>] [--wait] [--timeout <sec>] <file...>
   remy-admin datasources list
-  remy-admin datasources status [--source <slug>]
+  remy-admin datasources status [--source <slug>] [--status error] [--all]
   remy-admin datasources rm [--source <slug>] (--document <id> | --filter <k=v,...|json>)
   remy-admin datasources search [--source <slug>] [search options] <query>
   remy-admin datasources create --source <slug> [--name <name>] [--placement <resource-id|shared>] [rebuild settings...]

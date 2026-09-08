@@ -139,7 +139,8 @@ export interface DataSourcesDocumentStatus {
 
 /**
  * GET /datasources/documents — one page of per-document ingest state for one
- * pipeline, oldest first.
+ * pipeline, oldest first unless `order=newest`; `status=error` is the failures,
+ * newest failure first; `filename` a prefix.
  *
  * `pipelineVersion` is absent when the data source does not exist (returns `{ documents: [] }`).
  * `candidate=true` watches a migration in progress. `nextCursor` is set when
@@ -423,13 +424,18 @@ export interface DataSourcesDropResult {
   dropped: number;
 }
 
-/** POST /datasources/delete — delete every version, document, and byte. */
+/**
+ * POST /datasources/delete — delete every version, document, and byte. The
+ * source is gone to every reader when this returns; its rows and objects are
+ * removed by a background job, which `purging` says.
+ */
 export interface DataSourcesDeleteResult {
   deleted: true;
-  /** Number of documents removed. */
+  /** Number of documents being removed. */
   documents: number;
-  /** Number of pipeline versions dropped. */
+  /** Number of pipeline versions being dropped. */
   versions: number;
+  purging: boolean;
 }
 
 /**

@@ -15,6 +15,7 @@ import { call, qs } from '../http.js';
 import { elapsedSeconds, pollUntil, timedOut } from '../poll.js';
 import { uploadDirect } from '../upload.js';
 import type {
+  DataSourcesBuildProgress,
   DataSourcesConfigResult,
   DataSourcesConfigUpdateResult,
   DataSourcesCreateResult,
@@ -276,48 +277,76 @@ export interface WaitForCandidateParams {
 
 export interface WaitForCandidateResult {
   status: 'ready' | 'error' | 'timeout';
+  /** The candidate's build counts when the wait ended; null when it had no candidate. */
+  counts: DataSourcesBuildProgress | null;
+  /** The failed documents, first page, when any failed. */
   documents: SummarizedDocument[];
   /** Present only on status === 'timeout'. */
   error?: string;
 }
 
+/** Failed documents fetched for a status or a candidate wait. */
+export const FAILURES_PAGE = 50;
+
 /**
  * Poll a candidate version (`revectorize`) until every document has built.
- * `error` means at least one failed; `promote` with `force` accepts that.
+ * Reads the candidate's counts from the source list — one row, whatever the
+ * corpus holds — and fetches the failures only at the end. `error` means at
+ * least one failed; `promote` with `force` accepts that.
  */
 export async function waitForCandidate(
   ctx: AdminContext,
   params: WaitForCandidateParams,
 ): Promise<WaitForCandidateResult> {
   const timeoutMs = params.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
-  const pendingOf = (docs: DataSourcesDocumentStatus[]) =>
-    docs.filter((d) => d.status === 'processing');
 
   const outcome = await pollUntil(
-    () => allDocuments(ctx, { slug: params.slug, candidate: true }),
-    (docs) => pendingOf(docs).length === 0,
+    async () => {
+      const { dataSources } = await list(ctx);
+      const source = dataSources.find((s) => s.slug === params.slug);
+      if (!source) {
+        throw new Error(`Data source "${params.slug}" not found.`);
+      }
+      return source.candidate?.progress ?? null;
+    },
+    (progress) => progress === null || progress.processing === 0,
     {
       timeoutMs,
       pollMs: POLL_MS,
-      describe: (docs, start) =>
-        `rebuilding… ${docs.length - pendingOf(docs).length}/${docs.length} done (${elapsedSeconds(start)}s)`,
+      describe: (progress, start) =>
+        progress
+          ? `rebuilding… ${progress.done}/${progress.total} done (${elapsedSeconds(start)}s)`
+          : `rebuilding… (${elapsedSeconds(start)}s)`,
       onProgress: params.onProgress,
     },
   );
-  const docs = outcome.value;
+  const counts = outcome.value;
+  const failed =
+    counts && counts.error > 0
+      ? (
+          await documents(ctx, {
+            slug: params.slug,
+            candidate: true,
+            status: 'error',
+            limit: FAILURES_PAGE,
+          })
+        ).documents.map(summarize)
+      : [];
   if (!outcome.settled) {
     return {
       status: 'timeout',
-      documents: docs.map(summarize),
+      counts,
+      documents: failed,
       error: timedOut(
         timeoutMs,
-        `with ${pendingOf(docs).length} document(s) still building`,
+        `with ${counts?.processing ?? 0} document(s) still building`,
       ),
     };
   }
   return {
-    status: docs.some((d) => d.status === 'error') ? 'error' : 'ready',
-    documents: docs.map(summarize),
+    status: counts && counts.error > 0 ? 'error' : 'ready',
+    counts,
+    documents: failed,
   };
 }
 
@@ -334,13 +363,21 @@ export interface DocumentsParams {
   limit?: number;
   /** `nextCursor` from the previous page. */
   cursor?: string;
+  /** By the time the document was added; oldest first unless said otherwise. */
+  order?: 'oldest' | 'newest';
+  /** The failed builds only, newest failure first. */
+  status?: 'error';
+  /** Filenames starting with this. */
+  filename?: string;
 }
 
 /** The server's cap on `ids` per request; `allDocuments` chunks to it. */
 export const DOCUMENTS_IDS_MAX = 200;
 
 /**
- * Fetch one page of per-document ingest state for one pipeline, oldest first.
+ * Fetch one page of per-document ingest state for one pipeline, oldest first
+ * unless `order` says otherwise; `status: 'error'` narrows to the failures and
+ * `filename` to a name prefix.
  *
  * Returns an empty document list when the data source does not exist yet.
  * Pass `candidate: true` to watch a revectorization in progress. Follow
@@ -348,6 +385,7 @@ export const DOCUMENTS_IDS_MAX = 200;
  *
  * @example
  * const { documents, nextCursor } = await admin.dataSources.documents({ slug: 'policies' });
+ * const failed = await admin.dataSources.documents({ slug: 'policies', status: 'error' });
  */
 export function documents(ctx: AdminContext, params: DocumentsParams) {
   return call<DataSourcesDocumentsResult>(
@@ -359,6 +397,9 @@ export function documents(ctx: AdminContext, params: DocumentsParams) {
       ids: params.ids?.length ? params.ids.join(',') : undefined,
       limit: params.limit,
       cursor: params.cursor,
+      order: params.order,
+      status: params.status,
+      filename: params.filename,
     })}`,
   );
 }
@@ -394,6 +435,9 @@ export async function allDocuments(
         ids,
         limit: 1000,
         cursor,
+        order: params.order,
+        status: params.status,
+        filename: params.filename,
       });
       out.push(...(page.documents ?? []));
       cursor = page.nextCursor ?? undefined;
