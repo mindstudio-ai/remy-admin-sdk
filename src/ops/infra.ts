@@ -12,6 +12,7 @@ import { elapsedSeconds, pollUntil, timedOut } from '../poll.js';
 import type {
   InfraGetResult,
   InfraListResult,
+  InfraLogsResult,
   InfraPhase,
   InfraResource,
   InfraResourceResult,
@@ -64,6 +65,41 @@ export function get(ctx: AdminContext, params: GetParams) {
     ctx,
     'GET',
     `${base(ctx.appId)}/${encodeURIComponent(params.id)}`,
+  );
+}
+
+// ─── logs ────────────────────────────────────────────────────────────────────
+
+export interface LogsParams {
+  /** Resource id. */
+  id: string;
+  /** Continue after this line id (the last line of a previous page). */
+  after?: string;
+  /** Lines per page; without `after`, the newest this many. Max 500. */
+  limit?: number;
+}
+
+/**
+ * The platform's narration of a resource, oldest first: the steps a
+ * transition went through, failed attempts, and failures with the pod's
+ * events and a warnings-and-errors tail of the instance log. Not the
+ * instance's own stdout.
+ *
+ * @throws AdminApiError `resource_not_found` (404).
+ */
+export function logs(ctx: AdminContext, params: LogsParams) {
+  const query = new URLSearchParams();
+  if (params.after) {
+    query.set('after', params.after);
+  }
+  if (params.limit) {
+    query.set('limit', String(params.limit));
+  }
+  const search = query.toString();
+  return call<InfraLogsResult>(
+    ctx,
+    'GET',
+    `${base(ctx.appId)}/${encodeURIComponent(params.id)}/logs${search ? `?${search}` : ''}`,
   );
 }
 

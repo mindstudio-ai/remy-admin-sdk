@@ -75,6 +75,16 @@ export interface InfraResource {
   resizingTo: InfraOffering | null;
   /** When the last verified snapshot was taken; null if never. */
   lastSnapshotAt: string | null;
+  /**
+   * What this resource has actually been charged, from the ledger's own
+   * writes, with the hours at each rate beside it. Rates are on `offering`.
+   */
+  billing: {
+    activeHours: number;
+    hibernatedHours: number;
+    billedDollars: number;
+    lastBilledAt: string | null;
+  };
   activatedAt: string | null;
   hibernatedAt: string | null;
   destroyedAt: string | null;
@@ -93,6 +103,21 @@ export interface InfraEvent {
   createdAt: string;
 }
 
+/**
+ * One line of the platform's narration of a resource: a step reported while
+ * a transition ran ("Waiting for capacity", "Restoring collections 2/3"), a
+ * failed attempt, or a failure with what Kubernetes said about the pod at the
+ * time (`data`). Not the instance's own stdout.
+ */
+export interface InfraLogLine {
+  id: string;
+  phase: InfraPhase;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  data: { podEvents: string[]; logTail: string[] } | null;
+  createdAt: string;
+}
+
 /** GET /infra */
 export interface InfraListResult {
   resources: InfraResource[];
@@ -105,7 +130,15 @@ export interface InfraListResult {
 export interface InfraGetResult {
   resource: InfraResource;
   events: InfraEvent[];
+  /** The newest 200 narration lines, oldest first; `logs()` pages further. */
+  logs: InfraLogLine[];
   attachedSources: { id: string; slug: string; name: string | null }[];
+}
+
+/** GET /infra/:id/logs */
+export interface InfraLogsResult {
+  /** Oldest first. */
+  logs: InfraLogLine[];
 }
 
 /** POST /infra, /infra/:id/{hibernate,resume,destroy,rename,resize} */

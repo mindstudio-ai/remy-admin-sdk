@@ -29,9 +29,10 @@ const UUID_RE =
 export const dataSourceEvalsSpecs = {
   'datasources hydrate': {
     usage:
-      'Usage: remy-admin datasources hydrate [--source <slug>] [--wait] [--timeout <sec>]',
+      'Usage: remy-admin datasources hydrate [--source <slug>] [--since <iso>] [--wait] [--timeout <sec>]',
     flags: {
       source: { type: 'string' },
+      since: { type: 'string' },
       wait: { type: 'boolean' },
       timeout: { type: 'string' },
     },
@@ -231,7 +232,14 @@ function selectorFromFlag(
 
 async function hydrate(ctx: AdminContext, a: Args) {
   const slug = a.str('source') || DEFAULT_SOURCE;
-  const started = await evals.hydrate(ctx, { slug });
+  const since = a.str('since');
+  if (since && Number.isNaN(Date.parse(since))) {
+    fatal('--since must be an ISO 8601 timestamp, e.g. 2026-09-08T15:17:00Z.');
+  }
+  const started = await evals.hydrate(ctx, {
+    slug,
+    ...(since ? { since: new Date(since).toISOString() } : {}),
+  });
   if (started.resident || !a.bool('wait')) {
     out({
       dataSource: slug,
@@ -565,7 +573,7 @@ export const dataSourceEvalsHandlers = {
 /** Appended to the datasources group help. */
 export const dataSourceEvalsHelp = `
 Warming and sampling:
-  remy-admin datasources hydrate [--source <slug>] [--wait]
+  remy-admin datasources hydrate [--source <slug>] [--since <iso>] [--wait]
   remy-admin datasources sample --source <slug> --size <n> [--as <slug>] [--filter <k=v,...|json>] [--stratify <key>] [--placement <id|shared>] [--wait]
 
   A large source whose index was evicted (the shared pool holds a working set,
@@ -574,6 +582,14 @@ Warming and sampling:
   \`hydrate\` starts that reload ahead of time — before a demo, say — and
   \`--wait\` blocks until the index is back. \`datasources list\` shows the
   reload's progress under \`hydration\`.
+
+  \`hydrate --since <iso>\` is a refill rather than a warm-up: it copies every
+  document built at or after that time into the index whether or not the index
+  is resident. Dedicated capacity that restored from a snapshot is missing
+  everything written after the snapshot was taken; the platform starts this
+  refill itself when it sees the restore, and \`infra logs\` shows it. Use the
+  flag for a restore that predates that, with the snapshot's time from the
+  resource log.
 
   \`sample\` draws documents from a source into a new one that shares its
   exact pinned config, so what you measure on the sample says something about

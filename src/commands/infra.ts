@@ -21,6 +21,11 @@ export const infraSpecs = {
     usage: 'Usage: remy-admin infra get <id>',
     positionals: [{ name: 'id', required: true }],
   },
+  'infra logs': {
+    usage: 'Usage: remy-admin infra logs <id> [--follow] [--limit <n>]',
+    positionals: [{ name: 'id', required: true }],
+    flags: { follow: { type: 'boolean' }, limit: { type: 'string' } },
+  },
   'infra provision': {
     usage:
       'Usage: remy-admin infra provision --offering <id> [--name <name>] [--wait] [--timeout <sec>]',
@@ -108,6 +113,36 @@ async function infraList(ctx: AdminContext, a: Args) {
 
 async function infraGet(ctx: AdminContext, a: Args) {
   out(await infra.get(ctx, { id: a.req('id') }));
+}
+
+const FOLLOW_POLL_MS = 4000;
+
+/**
+ * The platform's narration of a resource. --follow keeps polling and prints
+ * each batch of new lines as its own JSON document until interrupted.
+ */
+async function infraLogs(ctx: AdminContext, a: Args) {
+  const id = a.req('id');
+  const limitRaw = a.str('limit');
+  const limit = limitRaw ? Number(limitRaw) : undefined;
+  let { logs } = await infra.logs(ctx, { id, ...(limit ? { limit } : {}) });
+  out({ logs });
+  if (!a.bool('follow')) {
+    return;
+  }
+  let after = logs.length > 0 ? logs[logs.length - 1].id : undefined;
+  while (true) {
+    await new Promise((resolve) => setTimeout(resolve, FOLLOW_POLL_MS));
+    ({ logs } = await infra.logs(ctx, {
+      id,
+      ...(after ? { after } : {}),
+      limit: 500,
+    }));
+    if (logs.length > 0) {
+      out({ logs });
+      after = logs[logs.length - 1].id;
+    }
+  }
 }
 
 /**
@@ -225,6 +260,7 @@ async function infraResize(ctx: AdminContext, a: Args) {
 export const infraHandlers = {
   'infra list': infraList,
   'infra get': infraGet,
+  'infra logs': infraLogs,
   'infra provision': infraProvision,
   'infra hibernate': infraHibernate,
   'infra resume': infraResume,
@@ -247,7 +283,8 @@ the price it committed to. Every action below is audited.
 
 Subcommands:
   list        Resources on this app, plus the offerings you can provision
-  get         One resource with its state timeline and attached sources
+  get         One resource: billing to date, state timeline, recent log, attached sources
+  logs        The platform's log for a resource (--follow to keep reading)
   provision   Lease a new resource (needs a month's credits; prints the price)
   hibernate   Park it: data kept, searches paused, compute charge stops
   resume      Bring a hibernated resource back
@@ -258,6 +295,7 @@ Subcommands:
 Usage:
   remy-admin infra list [--include-destroyed]
   remy-admin infra get <id>
+  remy-admin infra logs <id> [--follow] [--limit <n>]
   remy-admin infra provision --offering <id> [--name <name>] [--wait] [--timeout <sec>]
   remy-admin infra hibernate <id> [--wait] [--timeout <sec>]
   remy-admin infra resume <id> [--wait] [--timeout <sec>]
@@ -299,6 +337,19 @@ Phases and timing:
   (retried automatically; resume or hibernate to retry by hand). Each transition
   takes about two minutes, more with more data: snapshots and restores scale
   with the collection. --wait defaults to 600s; pass --timeout for a large one.
+
+Billing and the log:
+  \`infra get\` reports resource.billing: what the resource has actually been
+  charged to date (from the ledger, exact across resizes), the hours at each
+  rate, and when it was last billed. Rates are on resource.offering.
+
+  The log is the platform's narration of the resource, not the instance's
+  stdout: each step a transition went through ("Waiting for capacity",
+  "Restoring collections 2/3"), each failed attempt, and each failure with the
+  pod's recent Kubernetes events and the warnings-and-errors tail of the
+  instance log at that moment (line.data). \`infra get\` includes the newest
+  200 lines; \`infra logs\` pages the rest and, with --follow, prints new lines
+  every few seconds as their own JSON document until interrupted.
 
 --wait exit codes: 0 reached the target phase · 1 the platform reported failure ·
 2 still transitioning when --timeout elapsed (default 600s).`;

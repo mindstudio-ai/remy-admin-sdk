@@ -40,13 +40,21 @@ function base(appId: string): string {
  * Warm a source's index if it is cold. A search on a large cold index answers
  * `index_warming` until the reload lands; call this before a demo, or after an
  * eviction you know about. Answers `resident: true` when nothing was needed.
+ *
+ * With `since`, refill instead: copy every document built at or after that
+ * time into the index whether or not it is resident. What a dedicated
+ * instance needs after restoring from a snapshot taken then; the platform
+ * does this on its own when it sees the restore, this is the by-hand path.
  */
-export function hydrate(ctx: AdminContext, params: { slug: string }) {
+export function hydrate(
+  ctx: AdminContext,
+  params: { slug: string; since?: string },
+) {
   return call<DataSourcesHydrateResult>(
     ctx,
     'POST',
     `${base(ctx.appId)}/hydrate`,
-    { slug: params.slug },
+    { slug: params.slug, ...(params.since ? { since: params.since } : {}) },
   );
 }
 
