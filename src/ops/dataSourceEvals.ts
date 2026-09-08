@@ -50,6 +50,26 @@ export function hydrate(ctx: AdminContext, params: { slug: string }) {
   );
 }
 
+/**
+ * Recreate a dedicated source's collection with the platform's current shape
+ * and refill it from the stored vectors. Nothing is re-embedded. Dedicated
+ * capacity only; refused while a job, move, hydration or candidate version is
+ * in flight, and with `collection_shared` when another source shares the
+ * collection on that capacity. Same response as `hydrate`: follow it with
+ * `waitForHydration`.
+ *
+ * @throws AdminApiError `reindex_requires_dedicated` (422), `data_source_busy`
+ *   (422), `collection_shared` (422).
+ */
+export function reindex(ctx: AdminContext, params: { slug: string }) {
+  return call<DataSourcesHydrateResult>(
+    ctx,
+    'POST',
+    `${base(ctx.appId)}/reindex`,
+    { slug: params.slug },
+  );
+}
+
 export interface WaitForHydrationParams {
   slug: string;
   timeoutMs?: number;

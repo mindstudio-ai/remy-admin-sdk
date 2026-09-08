@@ -39,6 +39,8 @@ export interface DataSourceConnector {
   policy: DataSourceConnectorPolicy;
   lastSyncJobId: string | null;
   lastSyncedAt: string | null;
+  /** Keys the last sync's walk listed: the bucket's size as of then. */
+  lastSyncObjectsListed: number | null;
   lastError: string | null;
   /** Only on GET: how many customer keys the index tracks. */
   objects?: { live: number; deleted: number };

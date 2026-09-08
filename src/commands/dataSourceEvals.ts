@@ -1,6 +1,6 @@
 /**
- * CLI skin for `datasources hydrate`, `datasources sample` and the nested
- * `datasources eval` group. Operations live in ../ops/dataSourceEvals.js;
+ * CLI skin for `datasources hydrate`, `datasources reindex`, `datasources
+ * sample` and the nested `datasources eval` group. Operations live in ../ops/dataSourceEvals.js;
  * response shapes in ../types/dataSourceEvals.js.
  */
 
@@ -30,6 +30,15 @@ export const dataSourceEvalsSpecs = {
   'datasources hydrate': {
     usage:
       'Usage: remy-admin datasources hydrate [--source <slug>] [--wait] [--timeout <sec>]',
+    flags: {
+      source: { type: 'string' },
+      wait: { type: 'boolean' },
+      timeout: { type: 'string' },
+    },
+  },
+  'datasources reindex': {
+    usage:
+      'Usage: remy-admin datasources reindex [--source <slug>] [--wait] [--timeout <sec>]',
     flags: {
       source: { type: 'string' },
       wait: { type: 'boolean' },
@@ -241,6 +250,26 @@ async function hydrate(ctx: AdminContext, a: Args) {
     onProgress: progress,
   });
   out({ dataSource: slug, action: 'hydrate', ...result });
+  failOnWait(result);
+}
+
+async function reindex(ctx: AdminContext, a: Args) {
+  const slug = a.str('source') || DEFAULT_SOURCE;
+  const started = await evals.reindex(ctx, { slug });
+  if (!a.bool('wait')) {
+    out({
+      dataSource: slug,
+      ...started,
+      note: 'The collection was recreated and is refilling from stored vectors in the background. `datasources list` shows progress; re-run with --wait to block.',
+    });
+    return;
+  }
+  const result = await evals.waitForHydration(ctx, {
+    slug,
+    ...timeoutOf(a),
+    onProgress: progress,
+  });
+  out({ dataSource: slug, action: 'reindex', ...result });
   failOnWait(result);
 }
 
@@ -517,6 +546,7 @@ async function evalCompare(ctx: AdminContext, a: Args) {
 
 export const dataSourceEvalsHandlers = {
   'datasources hydrate': hydrate,
+  'datasources reindex': reindex,
   'datasources sample': sampleCmd,
   'datasources eval create': evalCreate,
   'datasources eval list': evalList,

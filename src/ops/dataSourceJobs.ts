@@ -212,19 +212,21 @@ export function waitForPlan(ctx: AdminContext, params: WaitParams) {
 }
 
 /**
- * Poll until the job reaches a terminal state, pauses, or settles in `planned`
- * with nothing about to move it: a gate refused an auto-approved plan, or the
- * plan waits for an approval nobody asked this wait to give. A pause is
- * reported as `failed` with the pause reason, since nothing more will happen
- * without the owner.
+ * Poll until the job reaches a terminal state, pauses for the owner, or
+ * settles in `planned` with nothing about to move it: a gate refused an
+ * auto-approved plan, or the plan waits for an approval nobody asked this wait
+ * to give. A pause for errors that will resume itself (`autoResumeAt` set) is
+ * ridden through; a pause that waits for the owner is reported as `failed`
+ * with the pause reason, since nothing more will happen without them.
  */
 export function waitForJob(ctx: AdminContext, params: WaitParams) {
   return settle(
     ctx,
     params,
     (job) =>
-      !['planning', 'planned', 'running'].includes(job.state) ||
-      (job.state === 'planned' && (job.error !== null || !job.autoApprove)),
+      !['planning', 'planned', 'running', 'paused'].includes(job.state) ||
+      (job.state === 'planned' && (job.error !== null || !job.autoApprove)) ||
+      (job.state === 'paused' && !job.autoResumeAt),
   );
 }
 

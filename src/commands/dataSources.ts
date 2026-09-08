@@ -760,6 +760,7 @@ Subcommands:
   map deploy   Make a build's compiled mapper the source's active one (a branch build will do)
   remap        Re-apply the active mapper to every raw copy the source holds
   hydrate      Reload an evicted index ahead of the first search
+  reindex      Recreate a dedicated source's collection with the current shape, refilled from stored vectors
   sample       Draw a sample of a source into a new one with the same config
   eval         Query sets and runs: measure recall, MRR and latency, compare versions
   revectorize  Rebuild a corpus under new settings, alongside the live one
@@ -778,7 +779,7 @@ Usage:
   remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--wait] [--timeout <sec>]
   remy-admin datasources jobs start|list|status|approve|pause|resume|cancel … (see below)
   remy-admin datasources connect|sync|connector|disconnect … (see below)
-  remy-admin datasources hydrate|sample … (see below)
+  remy-admin datasources hydrate|reindex|sample … (see below)
   remy-admin datasources eval create|list|get|add|import|queries|rm|delete|run|runs|result|compare … (see below)
   remy-admin datasources revectorize [--source <slug>] [settings...] [--wait]
   remy-admin datasources promote [--source <slug>] [--force]

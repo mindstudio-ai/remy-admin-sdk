@@ -219,6 +219,17 @@ export interface DataSourcesPlacement {
  * A sibling of `placement` because a source on the shared pool (placement
  * null) can be moving too.
  */
+/**
+ * Dedicated capacity's index, as Qdrant reports it: `deferred` while a bulk
+ * load runs (the node writes, nothing is indexed), `building` while the graph
+ * is built after one, `ready` otherwise.
+ */
+export interface DataSourcesIndex {
+  state: 'ready' | 'deferred' | 'building';
+  indexedVectors: number;
+  totalVectors: number;
+}
+
 export interface DataSourcesMigration {
   /** Where it is going; null is the shared pool. */
   toResourceId: string | null;
@@ -258,6 +269,13 @@ export interface DataSourcesListEntry {
   connector: DataSourceConnector | null;
   /** An index reload in flight after an eviction, or its last failure. */
   hydration: DataSourcesHydration | null;
+  /**
+   * Dedicated capacity only; null on the shared pool. `deferred` while a bulk
+   * load runs (the node writes, nothing is indexed), `building` while the
+   * index is built after one, `ready` otherwise. Search answers
+   * `index_building` (503) in the first two states.
+   */
+  index: DataSourcesIndex | null;
   /** The source this one was sampled from (`datasources sample`), or null. */
   sampleOf: string | null;
   /** The mapper the live release declares for this source, or null. */

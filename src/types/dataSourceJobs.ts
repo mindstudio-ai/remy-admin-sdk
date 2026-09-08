@@ -125,6 +125,8 @@ export interface DataSourceJob {
   limitObjects: number | null;
   enumerationDone: boolean;
   counts: {
+    /** Keys the planning walk listed, before the change diff: progress, not work. */
+    objectsListed: number;
     objectsSeen: number;
     bytesSeen: number;
     objectsDispatched: number;
@@ -147,6 +149,10 @@ export interface DataSourceJob {
    */
   pauseReason: 'user' | 'budget' | 'errors' | 'skips' | null;
   stalled: boolean;
+  /** Times a pause for errors resumed itself on its own schedule. */
+  autoResumes: number;
+  /** When a pause for errors will next resume itself; null when it waits for you. */
+  autoResumeAt: string | null;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
