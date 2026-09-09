@@ -148,10 +148,11 @@ export const dataSourcesSpecs = {
   },
   'datasources move': {
     usage:
-      'Usage: remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--restart] [--wait] [--timeout <sec>]',
+      'Usage: remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--chains <n>] [--restart] [--wait] [--timeout <sec>]',
     flags: {
       source: { type: 'string' },
       to: { type: 'string' },
+      chains: { type: 'number', min: 1 },
       restart: { type: 'boolean' },
       wait: { type: 'boolean' },
       timeout: { type: 'string' },
@@ -672,10 +673,12 @@ async function dataSourcesMove(ctx: AdminContext, a: Args) {
   const to = a.str('to') as string;
   const placement = to === 'shared' ? ('shared' as const) : { resourceId: to };
 
+  const chains = a.num('chains');
   const started = await dataSources.move(ctx, {
     slug,
     placement,
     ...(a.bool('restart') ? { restart: true } : {}),
+    ...(chains !== undefined ? { chains } : {}),
   });
   if (!started.migration || !a.bool('wait')) {
     out({
@@ -828,8 +831,8 @@ Usage:
   remy-admin datasources search [--source <slug>] [search options] <query>
   remy-admin datasources create --source <slug> [--name <name>] [--placement <resource-id|shared>] [rebuild settings...]
   remy-admin datasources config [--source <slug>] [--placement <resource-id|shared>] [settings...]
-  remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--wait] [--timeout <sec>]
-  remy-admin datasources jobs start|list|status|approve|pause|resume|cancel … (see below)
+  remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--chains <n>] [--restart] [--wait] [--timeout <sec>]
+  remy-admin datasources jobs start|list|status|approve|pause|resume|retry|cancel … (see below)
   remy-admin datasources connect|sync|connector|disconnect … (see below)
   remy-admin datasources hydrate|reindex|sample … (see below)
   remy-admin datasources eval create|list|get|add|import|queries|rm|delete|run|runs|result|compare … (see below)
@@ -915,9 +918,16 @@ Placement (shared pool vs dedicated capacity, see \`infra --help\`):
     \`move --wait\` blocks on it (exits ${EXIT.buildFailed} if the move failed,
     ${EXIT.timeout} on timeout). Moving to \`shared\` is how a source leaves a
     resource you mean to destroy.
-  A move is refused while documents are still building or a candidate version
-    exists (data_source_busy), when the target is not active
+  A move is refused while documents are being built right now or a candidate
+    version exists (data_source_busy), when the target is not active
     (capacity_<phase>), or when it would not fit (capacity_exceeded).
+  The copy runs as parallel chains, each a window of the corpus; the target
+    size sets the default (XL 32, Large 16, Medium 8, Small 4) and --chains <n>
+    overrides it, up to 128. Eight chains run per worker, so this is the worker
+    count times eight; the --wait line's documents/min shows what it bought.
+    Re-running \`move\` to the same target resumes a failed or running copy from
+    its chains' cursors; --restart cuts fresh windows instead (the count takes
+    effect then), discarding progress so far.
 
 Notes:
   --wait blocks until processing finishes, so you can search immediately after.

@@ -657,6 +657,14 @@ export interface MoveParams {
    * far discarded (points already copied are written again, harmlessly).
    */
   restart?: boolean;
+  /**
+   * Parallel chains to copy with, instead of the target size's default (XL 32,
+   * Large 16, Medium 8, Small 4; max 128). The platform runs eight chains per
+   * worker, so this is the worker count times eight. Takes effect when the
+   * copy's windows are cut: with a move already under way, pair it with
+   * `restart`.
+   */
+  chains?: number;
 }
 
 /**
@@ -684,6 +692,7 @@ export function move(ctx: AdminContext, params: MoveParams) {
     slug: params.slug,
     placement: params.placement,
     ...(params.restart ? { restart: true } : {}),
+    ...(params.chains !== undefined ? { chains: params.chains } : {}),
   });
 }
 
