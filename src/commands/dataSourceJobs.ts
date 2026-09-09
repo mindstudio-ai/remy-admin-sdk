@@ -77,6 +77,15 @@ export const dataSourceJobsSpecs = {
       timeout: { type: 'string' },
     },
   },
+  'datasources jobs retry': {
+    usage:
+      'Usage: remy-admin datasources jobs retry <id> [--wait] [--timeout <sec>]',
+    positionals: [{ name: 'id', required: true }],
+    flags: {
+      wait: { type: 'boolean' },
+      timeout: { type: 'string' },
+    },
+  },
   'datasources jobs cancel': {
     usage: 'Usage: remy-admin datasources jobs cancel <id>',
     positionals: [{ name: 'id', required: true }],
@@ -202,6 +211,16 @@ async function jobsResume(ctx: AdminContext, a: Args) {
   await waitAndReport(ctx, a, id, 'job', { action: 'resume' });
 }
 
+async function jobsRetry(ctx: AdminContext, a: Args) {
+  const id = a.req('id');
+  const { job } = await jobs.retry(ctx, { id });
+  if (!a.bool('wait')) {
+    out({ job });
+    return;
+  }
+  await waitAndReport(ctx, a, id, 'job', { action: 'retry' });
+}
+
 async function jobsCancel(ctx: AdminContext, a: Args) {
   out(await jobs.cancel(ctx, { id: a.req('id') }));
 }
@@ -213,6 +232,7 @@ export const dataSourceJobsHandlers = {
   'datasources jobs approve': jobsApprove,
   'datasources jobs pause': jobsPause,
   'datasources jobs resume': jobsResume,
+  'datasources jobs retry': jobsRetry,
   'datasources jobs cancel': jobsCancel,
 } satisfies Record<keyof typeof dataSourceJobsSpecs, Handler>;
 
@@ -225,6 +245,7 @@ Bulk ingestion (jobs):
   remy-admin datasources jobs status <id> [--wait] [--timeout <sec>]
   remy-admin datasources jobs approve <id> [--wait] [--timeout <sec>]
   remy-admin datasources jobs pause|resume|cancel <id>
+  remy-admin datasources jobs retry <id> [--wait] [--timeout <sec>]
 
   A job loads a whole corpus at once. It reads either every object under a
   prefix of one of the app's file stores (\`files put\` fills one; an app can
@@ -261,6 +282,14 @@ Bulk ingestion (jobs):
   failed batches in a row pause it, as does the budget. \`jobs resume\` continues
   from the checkpoint and retries failed batches; \`jobs cancel\` stops it and
   keeps what was indexed. Search works on the partial corpus throughout.
+
+  A batch that fails five times stays failed and the job finishes without it,
+  with its documents left mid-build; \`jobs status\` shows the batch's error.
+  Once the cause is fixed (capacity that was restoring, a provider outage),
+  \`jobs retry <id>\` puts the job back to running over just those batches and
+  finishes it again. A source with documents mid-build refuses to move or
+  re-vectorize (data_source_busy) until they finish, so retry is what clears
+  that.
 
   One bulk operation per source: a job refuses to start during a move or while
   a candidate version exists, and moves, re-vectorizes and deletes refuse while

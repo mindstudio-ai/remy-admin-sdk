@@ -200,6 +200,18 @@ export function resume(
   );
 }
 
+/**
+ * Run a finished job's failed batches again, after fixing what failed them.
+ * The job goes back to `running`; `nothing_to_retry` when none failed.
+ */
+export function retry(ctx: AdminContext, params: JobIdParams) {
+  return call<DataSourceJobResult>(
+    ctx,
+    'POST',
+    `${base(ctx.appId)}/${encodeURIComponent(params.id)}/retry`,
+  );
+}
+
 /** End the job. Documents already indexed stay. */
 export function cancel(ctx: AdminContext, params: JobIdParams) {
   return call<DataSourceJobResult>(
