@@ -651,6 +651,12 @@ export interface MoveParams {
   slug: string;
   /** A dedicated resource (see `admin.infra`) or the shared pool. */
   placement: { resourceId: string } | 'shared';
+  /**
+   * Start the copy over instead of resuming a move already under way to the
+   * same target: fresh chains cut at the target's current count, progress so
+   * far discarded (points already copied are written again, harmlessly).
+   */
+  restart?: boolean;
 }
 
 /**
@@ -677,6 +683,7 @@ export function move(ctx: AdminContext, params: MoveParams) {
   return call<DataSourcesMoveResult>(ctx, 'POST', `${base(ctx.appId)}/move`, {
     slug: params.slug,
     placement: params.placement,
+    ...(params.restart ? { restart: true } : {}),
   });
 }
 

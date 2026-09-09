@@ -148,10 +148,11 @@ export const dataSourcesSpecs = {
   },
   'datasources move': {
     usage:
-      'Usage: remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--wait] [--timeout <sec>]',
+      'Usage: remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--restart] [--wait] [--timeout <sec>]',
     flags: {
       source: { type: 'string' },
       to: { type: 'string' },
+      restart: { type: 'boolean' },
       wait: { type: 'boolean' },
       timeout: { type: 'string' },
     },
@@ -671,7 +672,11 @@ async function dataSourcesMove(ctx: AdminContext, a: Args) {
   const to = a.str('to') as string;
   const placement = to === 'shared' ? ('shared' as const) : { resourceId: to };
 
-  const started = await dataSources.move(ctx, { slug, placement });
+  const started = await dataSources.move(ctx, {
+    slug,
+    placement,
+    ...(a.bool('restart') ? { restart: true } : {}),
+  });
   if (!started.migration || !a.bool('wait')) {
     out({
       dataSource: slug,

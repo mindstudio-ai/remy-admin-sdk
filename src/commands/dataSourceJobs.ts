@@ -287,9 +287,9 @@ Bulk ingestion (jobs):
   with its documents left mid-build; \`jobs status\` shows the batch's error.
   Once the cause is fixed (capacity that was restoring, a provider outage),
   \`jobs retry <id>\` puts the job back to running over just those batches and
-  finishes it again. A source with documents mid-build refuses to move or
-  re-vectorize (data_source_busy) until they finish, so retry is what clears
-  that.
+  finishes it again, and works on a cancelled job too. Documents stranded that
+  way do not block a move: \`jobs retry\` builds them onto wherever the source
+  lives now.
 
   One bulk operation per source: a job refuses to start during a move or while
   a candidate version exists, and moves, re-vectorizes and deletes refuse while
