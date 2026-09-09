@@ -1,6 +1,6 @@
 {
   "name": "@madewithremy/admin",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "Admin SDK + CLI for managing production Remy apps",
   "type": "module",
   "main": "./dist/index.js",
