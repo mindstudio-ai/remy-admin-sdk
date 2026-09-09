@@ -37,6 +37,7 @@ import type {
   DataSourcesRetrievalUpdate,
   DataSourcesRevectorizeResult,
   DataSourcesSearchResult,
+  DataSourcesCountResult,
   DataSourcesUploadTokenResult,
 } from '../types/dataSources.js';
 
@@ -530,6 +531,37 @@ export function search(ctx: AdminContext, params: SearchParams) {
       ...(retrieval && Object.keys(retrieval).length ? { retrieval } : {}),
     },
   );
+}
+
+export interface CountParams {
+  /** Data source slug. */
+  slug: string;
+  /** Same grammar as search's filter; absent counts the whole corpus. */
+  filter?: Record<string, unknown>;
+  /** Count the candidate version instead of the live one. */
+  candidate?: boolean;
+}
+
+/**
+ * How many chunks match a filter — exact, over the whole corpus.
+ *
+ * `count({ slug, filter: { contains: query } })` is how many passages contain
+ * all the query's words: the honest figure to show beside a search's hits.
+ * Not a relevance count (none exists) and not the set `search` returns.
+ *
+ * @throws AdminApiError `invalid_filter` (400); `no_candidate_pipeline` (404)
+ *   with `candidate: true` and no revectorization in flight; `index_warming` /
+ *   `index_building` (503) while the corpus is loading or building.
+ * @example
+ * const { chunks } = await admin.dataSources.count({ slug: 'policies', filter: { contains: 'notice period' } });
+ */
+export function count(ctx: AdminContext, params: CountParams) {
+  const { slug, filter, candidate } = params;
+  return call<DataSourcesCountResult>(ctx, 'POST', `${base(ctx.appId)}/count`, {
+    slug,
+    ...(filter ? { filter } : {}),
+    ...(candidate ? { candidate: true } : {}),
+  });
 }
 
 // ─── config ───────────────────────────────────────────────────────────────────

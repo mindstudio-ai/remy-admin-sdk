@@ -330,6 +330,17 @@ export interface DataSourcesSearchResultItem {
 }
 
 /**
+ * POST /datasources/count. An exact containment count over the filter, in
+ * chunks (passages): `contains` = all the words, any order. Not the set
+ * `search` returns and not a relevance count, which does not exist.
+ */
+export interface DataSourcesCountResult {
+  chunks: number;
+  pipelineVersion: number;
+  latencyMs: number;
+}
+
+/**
  * POST /datasources/search.
  *
  * `mode` reports what actually ran (e.g. `reranked: false` after an adaptive skip

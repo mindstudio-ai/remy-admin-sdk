@@ -146,6 +146,17 @@ export const dataSourcesSpecs = {
       ...CONFIG_FLAGS,
     },
   },
+  'datasources count': {
+    usage:
+      'Usage: remy-admin datasources count [--source <slug>] [--filter <k=v,...|json>] [--contains <words>] [--phrase <text>] [--candidate]',
+    flags: {
+      source: { type: 'string' },
+      filter: { type: 'string' },
+      contains: { type: 'string' },
+      phrase: { type: 'string' },
+      candidate: { type: 'boolean' },
+    },
+  },
   'datasources move': {
     usage:
       'Usage: remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--chains <n>] [--restart] [--wait] [--timeout <sec>]',
@@ -391,6 +402,17 @@ async function dataSourcesSearch(ctx: AdminContext, a: Args) {
       ...(a.bool('highlight') ? { highlight: true } : {}),
       ...(a.bool('candidate') ? { candidate: true } : {}),
       ...(Object.keys(retrieval).length ? { retrieval } : {}),
+    }),
+  );
+}
+
+async function dataSourcesCount(ctx: AdminContext, a: Args) {
+  const filter = filterFromFlags(a);
+  out(
+    await dataSources.count(ctx, {
+      slug: sourceOf(a),
+      ...(filter ? { filter } : {}),
+      ...(a.bool('candidate') ? { candidate: true } : {}),
     }),
   );
 }
@@ -784,6 +806,7 @@ export const dataSourcesHandlers = {
   'datasources search': dataSourcesSearch,
   'datasources create': dataSourcesCreate,
   'datasources config': dataSourcesConfig,
+  'datasources count': dataSourcesCount,
   'datasources move': dataSourcesMove,
   'datasources revectorize': dataSourcesRevectorize,
   'datasources promote': dataSourcesPromote,
@@ -829,6 +852,7 @@ Usage:
   remy-admin datasources status [--source <slug>] [--status error] [--all]
   remy-admin datasources rm [--source <slug>] (--document <id> | --filter <k=v,...|json>)
   remy-admin datasources search [--source <slug>] [search options] <query>
+  remy-admin datasources count [--source <slug>] [--filter <k=v,...|json>] [--contains <words>] [--phrase <text>] [--candidate]
   remy-admin datasources create --source <slug> [--name <name>] [--placement <resource-id|shared>] [rebuild settings...]
   remy-admin datasources config [--source <slug>] [--placement <resource-id|shared>] [settings...]
   remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--chains <n>] [--restart] [--wait] [--timeout <sec>]
@@ -840,6 +864,14 @@ Usage:
   remy-admin datasources promote [--source <slug>] [--force]
   remy-admin datasources drop [--source <slug>] [--version <n>]
   remy-admin datasources delete --source <slug>
+
+Count:
+  \`count\` answers how many chunks match a filter, exactly, over the whole
+  corpus, in the same grammar search narrows by: --contains for passages that
+  hold all the words, --phrase for an exact sequence, --filter for metadata. No
+  flags counts the whole corpus. It is a containment count, not a relevance
+  count (none exists), and not the set search returns. The SDK's
+  \`Source.count(filter)\` is the same call for an app.
 
 Search options:
   --top-k <n>              Results to return (default 5, max 50)
