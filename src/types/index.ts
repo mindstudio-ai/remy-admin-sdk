@@ -24,6 +24,7 @@ export * from './issues.js';
 export * from './jewels.js';
 export * from './methods.js';
 export * from './prerender.js';
+export * from './progress.js';
 export * from './releases.js';
 export * from './requests.js';
 export * from './secrets.js';

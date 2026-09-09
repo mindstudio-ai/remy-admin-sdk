@@ -6,6 +6,8 @@
  *   src/common/DataSources/jobs/types.ts
  */
 
+import type { OperationProgress } from './progress.js';
+
 /**
  * Where a job's documents come from. `store` is every object under a prefix of
  * one of the app's file stores (what `files put` fills); `manifest` is a JSONL
@@ -96,10 +98,28 @@ export interface DataSourceJobPlan {
   capacity: {
     placement: 'shared' | 'dedicated';
     resourceId: string | null;
+    /**
+     * Chunks the placement holds in total at this source's dimensions: the
+     * shared pool's per-source cap, or what the resource would hold were this
+     * source alone on it.
+     */
     maxPoints: number;
+    /** Chunks already there (other sources on the resource, or this one's own). */
     heldPoints: number;
     /** False means approve is refused until the source moves or the resource grows. */
     fits: boolean;
+    /**
+     * Dedicated only: the bytes the decision was made on. `binding` names the
+     * limit that refused; `held`, `incoming` and `usable` are disk and RAM.
+     */
+    footprint?: {
+      dimensions: number;
+      fits: boolean;
+      binding: 'disk' | 'ram' | null;
+      held: { diskBytes: number; ramBytes: number };
+      incoming: { diskBytes: number; ramBytes: number };
+      usable: { diskBytes: number; ramBytes: number };
+    } | null;
   };
   durationMinutes: number;
   warnings: string[];
@@ -159,6 +179,12 @@ export interface DataSourceJob {
   startedAt: string | null;
   finishedAt: string | null;
   lastProgressAt: string | null;
+  /**
+   * The job in the one progress shape: objects listed while planning,
+   * documents processed against the plan's projection after, with the
+   * coordinator's measured rate and ETA.
+   */
+  progress: OperationProgress;
 }
 
 /** GET /datasources/jobs */

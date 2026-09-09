@@ -8,6 +8,7 @@
 
 import type { AdminContext } from '../ctx.js';
 import { call } from '../http.js';
+import { renderProgress } from '../output.js';
 import { elapsedSeconds, pollUntil, timedOut } from '../poll.js';
 import type {
   InfraGetResult,
@@ -191,16 +192,17 @@ export interface ResizeParams {
 }
 
 /**
- * Change a resource's size, keeping its data.
+ * Change a resource's size, keeping its documents.
  *
- * The platform parks the resource (a fresh snapshot), swaps its spec, and
- * brings it back up restored from that snapshot, so a resize passes through
- * `hibernated` and searches on its sources pause for the few minutes it
- * takes. A resource that is already hibernated swaps in place and stays
- * parked. Growing is gated on a month of credits at the new rate like a
- * provision; shrinking is refused below what the resource holds. The response
- * carries `resizingTo` until the swap has happened; `waitForPhase` with
- * `until: (r) => r.resizingTo === null` blocks on the whole thing.
+ * The platform parks the resource, swaps its spec, and brings it back up with
+ * its sources' indexes rebuilt from durable storage in the background, so a
+ * resize passes through `hibernated` and searches on those sources answer
+ * `index_warming` with the rebuild's progress until it lands. A resource that
+ * is already hibernated swaps in place and stays parked. Growing is gated on a
+ * month of credits at the new rate like a provision; shrinking is refused
+ * below what the resource holds. The response carries `resizingTo` until the
+ * swap has happened; `waitForPhase` with `until: (r) => r.resizingTo === null`
+ * blocks on the whole thing.
  *
  * @throws AdminApiError `resource_not_found` (404), `offering_not_found`
  *   (400), `offering_retired` (422), `same_offering` (400),
@@ -244,7 +246,7 @@ export interface WaitForPhaseParams {
    * phase it started from and is done only once `resizingTo` has cleared.
    */
   until?: (resource: InfraResource) => boolean;
-  /** Default 10 minutes. */
+  /** How long without movement before giving up. Default 10 minutes. */
   timeoutMs?: number;
   onProgress?: (message: string) => void;
 }
@@ -277,11 +279,23 @@ export async function waitForPhase(
       timeoutMs,
       pollMs: POLL_MS,
       describe: (resource, start) =>
-        `${resource.phase}${resource.detail ? ` · ${resource.detail}` : ''}${
-          resource.resizingTo
-            ? ` · resizing to ${resource.resizingTo.label}`
-            : ''
-        }… (${elapsedSeconds(start)}s)`,
+        resource.progress
+          ? renderProgress(
+              resource.progress,
+              start,
+              resource.resizingTo
+                ? `resizing to ${resource.resizingTo.label}`
+                : null,
+            )
+          : `${resource.phase}${resource.detail ? ` · ${resource.detail}` : ''}${
+              resource.resizingTo
+                ? ` · resizing to ${resource.resizingTo.label}`
+                : ''
+            }… (${elapsedSeconds(start)}s)`,
+      // A rebuild after a resume runs as long as it must; the timeout bounds
+      // silence, and a phase or step change counts as movement.
+      progressKey: (resource) =>
+        `${resource.phase}:${resource.progress?.done ?? ''}:${resource.detail ?? ''}`,
       onProgress: params.onProgress,
     },
   );

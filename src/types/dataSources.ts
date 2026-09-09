@@ -14,6 +14,7 @@ import type { DataSourceConnector } from './dataSourceConnectors.js';
 import type { DataSourcesHydration } from './dataSourceEvals.js';
 import type { DataSourceJob } from './dataSourceJobs.js';
 import type { DataSourceMapper } from './dataSourceMappers.js';
+import type { OperationProgress } from './progress.js';
 
 /**
  * Chunking settings pinned at pipeline creation.
@@ -221,14 +222,16 @@ export interface DataSourcesPlacement {
  * null) can be moving too.
  */
 /**
- * Dedicated capacity's index, as Qdrant reports it: `deferred` while a bulk
- * load runs (the node writes, nothing is indexed), `building` while the graph
- * is built after one, `ready` otherwise.
+ * Dedicated capacity's index, as Qdrant reports it: `building` while the
+ * optimizer is behind the writes (a load can outrun it for a while), `ready`
+ * otherwise.
  */
 export interface DataSourcesIndex {
-  state: 'ready' | 'deferred' | 'building';
+  state: 'ready' | 'building';
   indexedVectors: number;
   totalVectors: number;
+  /** The optimizer's progress in the one shape, with the platform's measured rate and ETA. */
+  progress: OperationProgress;
 }
 
 export interface DataSourcesMigration {
@@ -240,6 +243,8 @@ export interface DataSourcesMigration {
   startedAt: string;
   /** Set when the move failed; the source is unfrozen and a new move may start. */
   error: string | null;
+  /** The copy in the one progress shape, with the platform's measured rate and ETA. */
+  progress: OperationProgress;
 }
 
 /** One data source in the GET /datasources listing. */
@@ -271,10 +276,9 @@ export interface DataSourcesListEntry {
   /** An index reload in flight after an eviction, or its last failure. */
   hydration: DataSourcesHydration | null;
   /**
-   * Dedicated capacity only; null on the shared pool. `deferred` while a bulk
-   * load runs (the node writes, nothing is indexed), `building` while the
-   * index is built after one, `ready` otherwise. Search answers
-   * `index_building` (503) in the first two states.
+   * Dedicated capacity only; null on the shared pool. `building` while the
+   * optimizer is behind the writes, `ready` otherwise. Search answers
+   * `index_building` (503) while building.
    */
   index: DataSourcesIndex | null;
   /** The source this one was sampled from (`datasources sample`), or null. */

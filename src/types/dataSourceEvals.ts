@@ -7,13 +7,20 @@
  */
 
 import type { DataSourceJob } from './dataSourceJobs.js';
+import type { OperationProgress } from './progress.js';
 
-/** An index reload in flight after an eviction, or its last failure. */
+/**
+ * An index reload in flight, or its last failure: after an eviction on the
+ * shared pool, after a lost node or a resume on dedicated capacity, or a
+ * reindex. Null on the source when the index is simply resident.
+ */
 export interface DataSourcesHydration {
   copied: number;
   total: number;
   startedAt: string;
   error: string | null;
+  /** The reload in the one progress shape, with the platform's measured rate and ETA. */
+  progress: OperationProgress;
 }
 
 /** POST /datasources/hydrate */

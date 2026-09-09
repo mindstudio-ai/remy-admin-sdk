@@ -7,6 +7,8 @@
  *   src/common/Provisioning/offerings/define.ts
  */
 
+import type { OperationProgress } from './progress.js';
+
 /** Where a resource is in its lifecycle. Written only by the platform. */
 export type InfraPhase =
   | 'requested'
@@ -23,11 +25,12 @@ export type InfraPhase =
 export type InfraDesiredState = 'active' | 'hibernated' | 'destroyed';
 
 /**
- * What the platform last saw of an active resource's instance. `restoring` is
- * an instance that came back empty and is being refilled from its snapshot;
- * searches return `capacity_restoring` until it is `ready`.
+ * What the platform last saw of an active resource's instance. `rebuilding`
+ * is a serving instance onto which one or more placed sources are being copied
+ * back from durable storage (a new pod found their index empty); searches on
+ * those sources answer `index_warming` with the copy's progress until it lands.
  */
-export type InfraHealth = 'ready' | 'not-ready' | 'missing' | 'restoring';
+export type InfraHealth = 'ready' | 'not-ready' | 'missing' | 'rebuilding';
 
 /** A leasable product from the platform catalog. Prices are cogs + margin. */
 export interface InfraOffering {
@@ -35,15 +38,25 @@ export interface InfraOffering {
   kind: 'retrieval';
   /** User-facing size, e.g. "Small". */
   label: string;
-  /** User-facing capacity, e.g. "Up to ~1M chunks". */
+  /** User-facing capacity, e.g. "Up to ~34M chunks at 2560 dimensions (~48M at 1024, ~26M at 4096)". */
   description: string;
   hourlyPriceDollars: number;
   /** Hourly × 730. */
   monthlyPriceDollars: number;
-  /** Retained-storage rate while hibernated. */
+  /** Zero: a hibernated resource holds nothing; its sources' documents stay in the platform's own store. */
   hibernatedHourlyPriceDollars: number;
   hibernatedMonthlyPriceDollars: number;
-  capacity: { maxPoints: number };
+  /**
+   * What the size holds: its disk and RAM, and the chunks that comes to at
+   * each embedding dimension on offer, keyed by dimension ("2560"). A chunk
+   * embedded at 2560 dimensions takes two and a half times a 1024-dimension
+   * one, so a resource's room depends on what is placed on it.
+   */
+  capacity: {
+    diskGiB: number;
+    memoryGiB: number;
+    chunksByDimensions: Record<string, number>;
+  };
   capabilities: { hibernate: boolean };
   retired: boolean;
 }
@@ -64,17 +77,36 @@ export interface InfraResource {
   health: InfraHealth | null;
   /**
    * What the instance is doing right now, while a transition is under way
-   * ("Waiting for capacity", "Snapshotting collection 1/2"); null when nothing is.
+   * ("Waiting for capacity", "Starting Qdrant", "Scaling down"); null when nothing is.
    */
   detail: string | null;
+  /**
+   * The same in the one progress shape, with numbers where there are any: a
+   * rebuild of the sources placed here (documents, rate, ETA), an index build
+   * the optimizer is behind on (vectors), or a transition's step. Null when the
+   * resource is simply serving.
+   */
+  progress: OperationProgress | null;
+  /**
+   * What the sources placed here take on the instance: estimated from their
+   * chunk counts at their dimensions, and measured from the instance itself
+   * while it is up (null until it has reported), against what the size can
+   * hold. Null when the offering is unknown.
+   */
+  footprint: {
+    chunks: number;
+    estimatedDiskBytes: number;
+    measuredDiskBytes: number | null;
+    measuredRamBytes: number | null;
+    measuredAt: string | null;
+    usableDiskBytes: number;
+  } | null;
   /**
    * The size this resource is being resized to, while a resize is under way;
    * null otherwise. A resize passes through `hibernated` and back to the phase
    * it started from.
    */
   resizingTo: InfraOffering | null;
-  /** When the last verified snapshot was taken; null if never. */
-  lastSnapshotAt: string | null;
   /**
    * What this resource has actually been charged, from the ledger's own
    * writes, with the hours at each rate beside it. Rates are on `offering`.
@@ -105,7 +137,8 @@ export interface InfraEvent {
 
 /**
  * One line of the platform's narration of a resource: a step reported while
- * a transition ran ("Waiting for capacity", "Restoring collections 2/3"), a
+ * a transition ran ("Waiting for capacity", "Starting Qdrant"), a rebuild it
+ * started ("Instance replaced; checking each placed source's index on it"), a
  * failed attempt, or a failure with what Kubernetes said about the pod at the
  * time (`data`). Not the instance's own stdout.
  */

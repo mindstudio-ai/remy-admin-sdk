@@ -9,7 +9,8 @@
 
 import type { AdminContext } from '../ctx.js';
 import { call, qs } from '../http.js';
-import { elapsedSeconds, pollUntil, timedOut } from '../poll.js';
+import { renderProgress } from '../output.js';
+import { pollUntil, timedOut } from '../poll.js';
 import { uploadDirect } from '../upload.js';
 import type {
   DataSourceJob,
@@ -212,7 +213,7 @@ export function cancel(ctx: AdminContext, params: JobIdParams) {
 
 export interface WaitParams {
   id: string;
-  /** Default one hour. */
+  /** How long without movement before giving up. Default one hour. */
   timeoutMs?: number;
   onProgress?: (message: string) => void;
 }
@@ -264,6 +265,9 @@ async function settle(
       timeoutMs,
       pollMs: POLL_MS,
       describe: describeProgress,
+      // A load of any length is waited out while it moves; the timeout bounds
+      // silence. Planning moves by objects listed, a run by documents.
+      progressKey: (job) => `${job.state}:${job.progress.done}`,
       onProgress: params.onProgress,
     },
   );
@@ -303,21 +307,26 @@ async function settle(
   return { status: 'done', job };
 }
 
-/** One line of progress in the job's own terms. */
+/**
+ * One line of progress in the job's own terms: the platform's phase, count,
+ * rate and ETA, with the spend so far beside them. A planning walk that has
+ * finished listing says so, since its count has stopped moving on purpose.
+ */
 export function describeProgress(job: DataSourceJob, start: number): string {
-  const elapsed = `(${elapsedSeconds(start)}s)`;
-  if (job.state === 'planning') {
-    return job.enumerationDone
-      ? `planning… reading a sample of ${job.counts.objectsSeen.toLocaleString()} objects ${elapsed}`
-      : `planning… ${job.counts.objectsSeen.toLocaleString()} objects counted ${elapsed}`;
+  if (job.state === 'planning' && job.enumerationDone) {
+    return renderProgress(
+      { ...job.progress, phase: 'planning' },
+      start,
+      `reading a sample of ${job.counts.objectsSeen.toLocaleString()} objects`,
+    );
   }
-  const total = job.plan?.projected.documents ?? job.counts.objectsSeen;
-  const processed =
-    job.counts.documentsDone +
-    job.counts.documentsSkipped +
-    job.counts.documentsFailed;
-  const spend = `$${job.estimatedDollars.toFixed(2)}${
-    job.budgetDollars !== null ? ` of $${job.budgetDollars.toFixed(2)}` : ''
-  }`;
-  return `${job.state}… ${processed.toLocaleString()}/${total.toLocaleString()} documents · ${spend} ${elapsed}`;
+  const spend =
+    job.state === 'planning'
+      ? null
+      : `$${job.estimatedDollars.toFixed(2)}${
+          job.budgetDollars !== null
+            ? ` of $${job.budgetDollars.toFixed(2)}`
+            : ''
+        }`;
+  return renderProgress(job.progress, start, spend);
 }

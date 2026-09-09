@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 
 import type { AdminContext } from '../ctx.js';
 import { call, qs } from '../http.js';
+import { renderProgress } from '../output.js';
 import { elapsedSeconds, pollUntil, timedOut } from '../poll.js';
 import { uploadDirect } from '../upload.js';
 import type {
@@ -181,7 +182,7 @@ export async function addDocument(
 export interface WaitForIngestParams {
   slug: string;
   documentIds: string[];
-  /** Defaults to DEFAULT_WAIT_TIMEOUT_MS (15 min). */
+  /** How long without movement before giving up. Defaults to DEFAULT_WAIT_TIMEOUT_MS (15 min). */
   timeoutMs?: number;
   /**
    * Receives the exact progress strings the CLI prints today:
@@ -245,6 +246,7 @@ export async function waitForIngest(
       pollMs: POLL_MS,
       describe: (tracked, start) =>
         `ingesting… ${tracked.length - pendingOf(tracked).length}/${tracked.length} done (${elapsedSeconds(start)}s)`,
+      progressKey: (tracked) => pendingOf(tracked).length,
       onProgress,
     },
   );
@@ -269,7 +271,7 @@ export async function waitForIngest(
 
 export interface WaitForCandidateParams {
   slug: string;
-  /** Defaults to DEFAULT_WAIT_TIMEOUT_MS (15 min). */
+  /** How long without movement before giving up. Defaults to DEFAULT_WAIT_TIMEOUT_MS (15 min). */
   timeoutMs?: number;
   /** Receives `rebuilding… X/Y done (Ns)`. */
   onProgress?: (message: string) => void;
@@ -317,6 +319,7 @@ export async function waitForCandidate(
         progress
           ? `rebuilding… ${progress.done}/${progress.total} done (${elapsedSeconds(start)}s)`
           : `rebuilding… (${elapsedSeconds(start)}s)`,
+      progressKey: (progress) => progress?.processing ?? null,
       onProgress: params.onProgress,
     },
   );
@@ -679,9 +682,9 @@ export function move(ctx: AdminContext, params: MoveParams) {
 
 export interface WaitForMoveParams {
   slug: string;
-  /** Defaults to DEFAULT_WAIT_TIMEOUT_MS (15 min). */
+  /** How long without movement before giving up. Defaults to DEFAULT_WAIT_TIMEOUT_MS (15 min). */
   timeoutMs?: number;
-  /** Receives `moving… X/Y documents (Ns)`. */
+  /** Receives `copying… X/Y documents · N/min · about M min left (Ns)`. */
   onProgress?: (message: string) => void;
 }
 
@@ -717,7 +720,10 @@ export async function waitForMove(
       timeoutMs,
       pollMs: POLL_MS,
       describe: (source, start) =>
-        `moving… ${source.migration!.copied}/${source.migration!.total} documents (${elapsedSeconds(start)}s)`,
+        renderProgress(source.migration!.progress, start),
+      // A corpus of any size moves as long as it keeps moving; the timeout
+      // bounds silence.
+      progressKey: (source) => source.migration?.copied ?? null,
       onProgress: params.onProgress,
     },
   );

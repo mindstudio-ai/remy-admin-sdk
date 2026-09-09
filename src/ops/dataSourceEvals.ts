@@ -6,6 +6,7 @@
 
 import type { AdminContext } from '../ctx.js';
 import { call, qs } from '../http.js';
+import { renderProgress } from '../output.js';
 import { elapsedSeconds, pollUntil, timedOut } from '../poll.js';
 import { list as listSources } from './dataSources.js';
 import type { DataSourcesListEntry } from '../types/dataSources.js';
@@ -40,21 +41,13 @@ function base(appId: string): string {
  * Warm a source's index if it is cold. A search on a large cold index answers
  * `index_warming` until the reload lands; call this before a demo, or after an
  * eviction you know about. Answers `resident: true` when nothing was needed.
- *
- * With `since`, refill instead: copy every document built at or after that
- * time into the index whether or not it is resident. What a dedicated
- * instance needs after restoring from a snapshot taken then; the platform
- * does this on its own when it sees the restore, this is the by-hand path.
  */
-export function hydrate(
-  ctx: AdminContext,
-  params: { slug: string; since?: string },
-) {
+export function hydrate(ctx: AdminContext, params: { slug: string }) {
   return call<DataSourcesHydrateResult>(
     ctx,
     'POST',
     `${base(ctx.appId)}/hydrate`,
-    { slug: params.slug, ...(params.since ? { since: params.since } : {}) },
+    { slug: params.slug },
   );
 }
 
@@ -80,7 +73,9 @@ export function reindex(ctx: AdminContext, params: { slug: string }) {
 
 export interface WaitForHydrationParams {
   slug: string;
+  /** How long without movement before giving up. Defaults to DEFAULT_WAIT_TIMEOUT_MS (30 min). */
   timeoutMs?: number;
+  /** Receives `copying… X/Y documents · N/min · about M min left (Ns)`. */
   onProgress?: (message: string) => void;
 }
 
@@ -109,7 +104,10 @@ export async function waitForHydration(
       timeoutMs,
       pollMs: POLL_MS,
       describe: (source, start) =>
-        `loading… ${source.hydration!.copied}/${source.hydration!.total} documents (${elapsedSeconds(start)}s)`,
+        renderProgress(source.hydration!.progress, start),
+      // A reload of any size is waited out while it moves; the timeout
+      // bounds silence.
+      progressKey: (source) => source.hydration?.copied ?? null,
       onProgress: params.onProgress,
     },
   );

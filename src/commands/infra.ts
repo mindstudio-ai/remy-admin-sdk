@@ -317,26 +317,29 @@ Placing a data source on a resource:
 
   Searches on a source whose resource is not active fail with
   capacity_<phase>: capacity_hibernated once parked, capacity_hibernating /
-  capacity_resuming while it moves. \`active\` means searchable: a resumed
-  resource reports active only once its data is restored. capacity_restoring
-  is the rare case of an active instance that was replaced (node loss) and is
-  refilling from its snapshot. The messages are written for the app's end
-  user; the stable code is what to act on.
+  capacity_resuming while it moves. Once active, a source whose index is being
+  rebuilt from durable storage (after a resume, a resize or a lost node)
+  answers index_warming with the rebuild's progress and ETA until it lands;
+  \`datasources list\` shows it under hydration and the resource under
+  progress. The messages are written for the app's end user; the stable code
+  is what to act on.
 
 Resizing:
-  A resize keeps the data. The resource is parked (a fresh snapshot), its spec
-  is swapped, and it comes back up restored from that snapshot, so searches on
-  its sources pause for the few minutes it takes. A hibernated resource swaps
-  in place and stays parked. Growing needs a month's credits at the new rate;
-  shrinking is refused below what the resource holds (resize_too_small).
-  \`infra get\` shows resizingTo until the swap has happened.
+  A resize keeps the documents: the resource is parked, its spec is swapped,
+  and it comes back up with its sources' indexes rebuilt from durable storage
+  in the background (nothing is re-embedded). Searches on those sources answer
+  index_warming until the rebuild lands. A hibernated resource swaps in place
+  and stays parked. Growing needs a month's credits at the new rate; shrinking
+  is refused below what the resource holds (resize_too_small). \`infra get\`
+  shows resizingTo until the swap has happened.
 
 Phases and timing:
   requested → provisioning → active ⇄ hibernated → destroyed, with hibernating /
   resuming / decommissioning in between and failed when a change cannot complete
-  (retried automatically; resume or hibernate to retry by hand). Each transition
-  takes about two minutes, more with more data: snapshots and restores scale
-  with the collection. --wait defaults to 600s; pass --timeout for a large one.
+  (retried automatically; resume or hibernate to retry by hand). A transition
+  takes a minute or two; the rebuild that follows a resume runs under its own
+  progress with a measured ETA. --wait gives up only after --timeout (default
+  600s) WITHOUT movement, so a long rebuild is waited out while it moves.
 
 Billing and the log:
   \`infra get\` reports resource.billing: what the resource has actually been
@@ -345,7 +348,8 @@ Billing and the log:
 
   The log is the platform's narration of the resource, not the instance's
   stdout: each step a transition went through ("Waiting for capacity",
-  "Restoring collections 2/3"), each failed attempt, and each failure with the
+  "Rebuilding archive v1 from its artifacts: 14,333,673 document(s)"), each
+  failed attempt, and each failure with the
   pod's recent Kubernetes events and the warnings-and-errors tail of the
   instance log at that moment (line.data). \`infra get\` includes the newest
   200 lines; \`infra logs\` pages the rest and, with --follow, prints new lines
