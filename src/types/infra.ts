@@ -88,16 +88,16 @@ export interface InfraResource {
    */
   progress: OperationProgress | null;
   /**
-   * What the sources placed here take on the instance: estimated from their
-   * chunk counts at their dimensions, and measured from the instance itself
-   * while it is up (null until it has reported), against what the size can
-   * hold. Null when the offering is unknown.
+   * What the sources placed here take on the instance, estimated from their
+   * chunk counts at their dimensions, against what the size can hold
+   * (`usableDiskBytes`). `storedBytes` is the vectors and payload the instance
+   * itself reports (null until it has); the indexes and WAL sit on top of it,
+   * so it runs under the estimate. Null when the offering is unknown.
    */
   footprint: {
     chunks: number;
     estimatedDiskBytes: number;
-    measuredDiskBytes: number | null;
-    measuredRamBytes: number | null;
+    storedBytes: number | null;
     measuredAt: string | null;
     usableDiskBytes: number;
   } | null;
