@@ -30,7 +30,13 @@ export type InfraDesiredState = 'active' | 'hibernated' | 'destroyed';
  * back from durable storage (a new pod found their index empty); searches on
  * those sources answer `index_warming` with the copy's progress until it lands.
  */
-export type InfraHealth = 'ready' | 'not-ready' | 'missing' | 'rebuilding';
+export type InfraHealth =
+  | 'ready'
+  | 'not-ready'
+  | 'missing'
+  | 'rebuilding'
+  /** Serving in Qdrant's low-memory mode after repeated out-of-memory restarts, until memory settles. */
+  | 'degraded';
 
 /** A leasable product from the platform catalog. Prices are cogs + margin. */
 export interface InfraOffering {
@@ -100,6 +106,24 @@ export interface InfraResource {
     storedBytes: number | null;
     measuredAt: string | null;
     usableDiskBytes: number;
+  } | null;
+  /**
+   * The instance's resident memory against the limit it is killed at, as
+   * last sampled; null until the platform has observed the instance.
+   */
+  memory: {
+    residentBytes: number;
+    limitBytes: number;
+    sampledAt: string;
+  } | null;
+  /**
+   * How often the instance has restarted and why it last stopped (`OOMKilled`,
+   * `Error`); null until observed. `infra logs` carries each restart as a line.
+   */
+  restarts: {
+    count: number;
+    lastReason: string | null;
+    lastAt: string | null;
   } | null;
   /**
    * The size this resource is being resized to, while a resize is under way;

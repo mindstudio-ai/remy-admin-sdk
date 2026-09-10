@@ -159,19 +159,20 @@ export const dataSourcesSpecs = {
   },
   'datasources move': {
     usage:
-      'Usage: remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--chains <n>] [--restart] [--wait] [--timeout <sec>]',
+      'Usage: remy-admin datasources move [--source <slug>] --to <resource-id|shared> [--chains <n>] [--restart] [--wait] [--timeout <sec>] | --stop',
     flags: {
       source: { type: 'string' },
       to: { type: 'string' },
       chains: { type: 'number', min: 1 },
       restart: { type: 'boolean' },
+      stop: { type: 'boolean' },
       wait: { type: 'boolean' },
       timeout: { type: 'string' },
     },
     requireAnyOf: {
-      flags: ['to'],
+      flags: ['to', 'stop'],
       message:
-        '--to is required: a resource id from `infra list`, or `shared`.',
+        '--to is required: a resource id from `infra list`, or `shared`. Or --stop to halt a move under way.',
     },
   },
   'datasources revectorize': {
@@ -692,6 +693,14 @@ async function dataSourcesConfig(ctx: AdminContext, a: Args) {
  */
 async function dataSourcesMove(ctx: AdminContext, a: Args) {
   const slug = sourceOf(a);
+  if (a.bool('stop')) {
+    out({
+      dataSource: slug,
+      ...(await dataSources.stopMove(ctx, { slug })),
+      note: 'Stopped; the chains halt at their next checkpoint. Re-run `datasources move --to <same target>` to resume from where they were.',
+    });
+    return;
+  }
   const to = a.str('to') as string;
   const placement = to === 'shared' ? ('shared' as const) : { resourceId: to };
 
@@ -955,11 +964,18 @@ Placement (shared pool vs dedicated capacity, see \`infra --help\`):
     (capacity_<phase>), or when it would not fit (capacity_exceeded).
   The copy runs as parallel chains, each a window of the corpus; the target
     size sets the default (XL 32, Large 16, Medium 8, Small 4) and --chains <n>
-    overrides it, up to 128. Eight chains run per worker, so this is the worker
-    count times eight; the --wait line's documents/min shows what it bought.
-    Re-running \`move\` to the same target resumes a failed or running copy from
-    its chains' cursors; --restart cuts fresh windows instead (the count takes
-    effect then), discarding progress so far.
+    overrides it, up to 128. Four chains run per worker, so this is the worker
+    count times four; the --wait line's documents/min shows what it bought.
+    Re-running \`move\` to the same target attaches to a running copy (--wait
+    picks the watch back up), resumes a failed one from its chains' cursors,
+    and queues the chains again for one that has made no progress for 30
+    minutes; --restart cuts fresh windows instead (the count takes effect
+    then), discarding progress so far. --stop halts a running copy at its
+    chains' next checkpoint; a plain re-run resumes it.
+  The copy paces itself to the target's optimizer: it waits while the target
+    holds more unconverted points than its memory allows, so a large corpus
+    lands at the rate the instance can index, and the target's full-text
+    index is built once at the end rather than per page.
 
 Notes:
   --wait blocks until processing finishes, so you can search immediately after.

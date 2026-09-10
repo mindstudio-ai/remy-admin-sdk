@@ -691,12 +691,31 @@ export interface MoveParams {
   restart?: boolean;
   /**
    * Parallel chains to copy with, instead of the target size's default (XL 32,
-   * Large 16, Medium 8, Small 4; max 128). The platform runs eight chains per
-   * worker, so this is the worker count times eight. Takes effect when the
+   * Large 16, Medium 8, Small 4; max 128). The platform runs four chains per
+   * worker, so this is the worker count times four. Takes effect when the
    * copy's windows are cut: with a move already under way, pair it with
    * `restart`.
    */
   chains?: number;
+}
+
+/**
+ * Halt a move under way. Its chains stop at their next checkpoint and the
+ * record reads `error: "Stopped by operator."`; a plain `move` to the same
+ * target resumes from the chains' cursors.
+ *
+ * @throws AdminApiError `data_source_not_found` (404), `no_move_in_flight`
+ *   (422) when nothing is being moved.
+ * @example
+ * await admin.dataSources.stopMove({ slug: 'archive' });
+ */
+export function stopMove(ctx: AdminContext, params: { slug: string }) {
+  return call<DataSourcesMoveResult>(
+    ctx,
+    'POST',
+    `${base(ctx.appId)}/move/stop`,
+    { slug: params.slug },
+  );
 }
 
 /**
@@ -770,8 +789,13 @@ export async function waitForMove(
       describe: (source, start) =>
         renderProgress(source.migration!.progress, start),
       // A corpus of any size moves as long as it keeps moving; the timeout
-      // bounds silence.
-      progressKey: (source) => source.migration?.copied ?? null,
+      // bounds silence. The settle moves without copying — it builds the
+      // target's full-text index and reports coverage — so its sample time
+      // counts as movement too.
+      progressKey: (source) =>
+        source.migration
+          ? `${source.migration.copied}|${source.migration.progress.updatedAt ?? ''}`
+          : null,
       onProgress: params.onProgress,
     },
   );

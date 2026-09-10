@@ -63,6 +63,10 @@ export function renderProgress(
       : null;
   const parts = [
     `${p.phase}…`,
+    // The operation's own word on what it is doing when the count does not
+    // say (a settle building its full-text index); a failure's note is its
+    // error and prints on its own line instead.
+    p.phase !== 'failed' ? p.note : null,
     count,
     rate,
     describeEta(p.etaAt),
