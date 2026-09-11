@@ -217,7 +217,7 @@ export interface DashboardLiveRelease {
 /**
  * Response from GET /_internal/v2/apps/:appId/dashboard.
  * Only the fields used by this CLI are typed; the full shape
- * (interfaces detail, previewReleases, devSession) is wider.
+ * (interfaces detail, previewReleases, devSessions) is wider.
  */
 export interface DashboardResult {
   appId: string;
@@ -228,5 +228,10 @@ export interface DashboardResult {
   releases: ReleaseFragment[];
   interfaces: Record<string, unknown>;
   previewReleases: unknown[];
-  devSession: Record<string, unknown>;
+  /**
+   * One per workspace with a dev session open — a person's box, a person's CLI — and empty when
+   * none is. Each carries the `releaseId` that names it, which is what the destructive data ops
+   * take to say which session they mean.
+   */
+  devSessions: Array<Record<string, unknown>>;
 }

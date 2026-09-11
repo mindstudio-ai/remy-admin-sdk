@@ -17,13 +17,16 @@ import type { Handler } from '../types.js';
 export const dataSpecs = {
   'data lift-from-dev': {
     usage:
-      'Usage: remy-admin data lift-from-dev <appId> --confirm\n' +
+      'Usage: remy-admin data lift-from-dev <appId> --confirm [--release-id <id>]\n' +
       'Refusing to run without the exact appId and --confirm: this destructively ' +
       "replaces the live release's databases with a snapshot of dev. Wipes any " +
       'rows live had — including signed-up users. Intended for first-publish / ' +
-      'pre-launch data sync only.',
+      'pre-launch data sync only.\n' +
+      '--release-id names which of your dev workspaces to lift from, and is ' +
+      'required only when you have more than one open (a box and a laptop CLI). ' +
+      'The ambiguity error lists the ids.',
     positionals: [{ name: 'appId', required: true }],
-    flags: { confirm: { type: 'boolean' } },
+    flags: { confirm: { type: 'boolean' }, 'release-id': { type: 'string' } },
     requireAnyOf: {
       flags: ['confirm'],
       message: 'Refusing to run without --confirm.',
@@ -31,12 +34,18 @@ export const dataSpecs = {
   },
   'data lift-from-live': {
     usage:
-      'Usage: remy-admin data lift-from-live [--truncate] --confirm\n' +
+      'Usage: remy-admin data lift-from-live [--truncate] --confirm [--release-id <id>]\n' +
       'Refusing to run without --confirm: this destructively replaces the ' +
       "dev release's databases with a snapshot of live (wiping local dev " +
       'data). Live/prod data is never touched. With --truncate it instead ' +
-      'empties the dev databases (keeps schema, no data pulled from live).',
-    flags: { truncate: { type: 'boolean' }, confirm: { type: 'boolean' } },
+      'empties the dev databases (keeps schema, no data pulled from live).\n' +
+      '--release-id names which of your dev workspaces to overwrite, and is ' +
+      'required only when you have more than one open.',
+    flags: {
+      truncate: { type: 'boolean' },
+      confirm: { type: 'boolean' },
+      'release-id': { type: 'string' },
+    },
     requireAnyOf: {
       flags: ['confirm'],
       message: 'Refusing to run without --confirm.',
@@ -55,10 +64,15 @@ async function dataLiftFromDev(ctx: AdminContext, a: Args) {
         'exact appId from mindstudio.json.',
     );
   }
-  out(await data.liftFromDev(ctx));
+  out(await data.liftFromDev(ctx, { releaseId: a.str('release-id') }));
 }
 async function dataLiftFromLive(ctx: AdminContext, a: Args) {
-  out(await data.liftFromLive(ctx, { truncate: a.bool('truncate') }));
+  out(
+    await data.liftFromLive(ctx, {
+      truncate: a.bool('truncate'),
+      releaseId: a.str('release-id'),
+    }),
+  );
 }
 
 export const dataHandlers = {
