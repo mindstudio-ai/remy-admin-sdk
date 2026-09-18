@@ -28,7 +28,6 @@ const SETTABLE_KEYS = [
   'signupAllowlistEnabled',
   'testAccountsEnabled',
   'telemetryCaptureResponseBodies',
-  'autoTriageIssues',
   'analyticsExtraQueryParams',
 ] as const;
 
@@ -359,8 +358,6 @@ Settable keys (settings set):
   telemetryCaptureResponseBodies Include failed-request response bodies (~1KB) in
                                  frontend error reports. Default: true; turn off if API
                                  responses may carry PII or tokens.
-  autoTriageIssues               Auto-run the read-only triage agent on new bug issues.
-                                 Default: false.
   analyticsExtraQueryParams      JSON array of query-param names to preserve in
                                  analytics URLs beyond the UTM/ad-click defaults.
 

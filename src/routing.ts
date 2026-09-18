@@ -25,7 +25,7 @@ Commands:
   secrets     Manage app secrets (env vars)
   methods     List and invoke methods
   data        Sync databases between dev and live (lift-from-dev / lift-from-live)
-  issues      File and manage issues (bugs, ideas, tasks)
+  issues      File and manage issues, in this app or another app in the workspace
   prerender   Manage + verify prerendered snapshots served to bots/crawlers
   files       Store, retrieve, share (signed links) + manage files in the app's stores
   datasources Build and query searchable document corpora (RAG)

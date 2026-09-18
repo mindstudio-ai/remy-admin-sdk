@@ -24,6 +24,18 @@ export interface FlagSpec {
   min?: number;
   /** 'number' only. */
   max?: number;
+  /**
+   * Closed value set, same guarantee positionals already had: a typo'd value
+   * is rejected with the valid ones named, rather than forwarded to the server
+   * to be ignored or to 400 with less context.
+   */
+  choices?: readonly string[];
+  /**
+   * Repeatable flag ('string' only) — `--x a --x b`, read via `Args.list()`.
+   * Each value is also split on commas, so `--x a,b` means the same thing (the
+   * `gh` habit). Without this, parseArgs keeps only the last occurrence.
+   */
+  multiple?: true;
 }
 
 interface PositionalSpec {
@@ -67,7 +79,20 @@ export const PAGINATION = {
   offset: { type: 'number', min: 0 },
 } as const satisfies Record<string, FlagSpec>;
 
-type FlagValue = string | number | boolean | undefined;
+/**
+ * Target a different app than the workspace's own — the cross-app primitive,
+ * the analogue of `gh --repo`. Any app in the same workspace is reachable with
+ * the same credential, so this is a targeting flag, not an escalation.
+ *
+ * There is no inherited-flag mechanism (`preflightUnknownFlags` rejects
+ * anything not on the one spec), so every command that accepts it spreads this
+ * in. `prod.ts` reads it generically when building the context.
+ */
+export const APP = {
+  app: { type: 'string' },
+} as const satisfies Record<string, FlagSpec>;
+
+type FlagValue = string | number | boolean | string[] | undefined;
 
 export class Args {
   constructor(
@@ -105,6 +130,12 @@ export class Args {
     return value === undefined ? undefined : String(value);
   }
 
+  /** A repeatable flag's values (`multiple: true`). Absent → undefined. */
+  list(flag: string): string[] | undefined {
+    const value = this.flags[flag];
+    return Array.isArray(value) ? value : undefined;
+  }
+
   num(flag: string): number | undefined {
     const value = this.flags[flag];
     return value === undefined ? undefined : Number(value);
@@ -134,6 +165,22 @@ export class Args {
  * error text, listing the real options turns a failed call into a usable hint.
  * `strict: true` still backs this up.
  */
+/** Reject a flag value outside its declared `choices`, naming the valid ones. */
+function checkChoice(
+  value: string,
+  flag: string,
+  flagSpec: FlagSpec,
+  usage: string,
+): void {
+  if (!flagSpec.choices || flagSpec.choices.includes(value)) {
+    return;
+  }
+  throw new UsageError(
+    `Invalid value "${value}" for --${flag}. Valid: ${flagSpec.choices.join('|')}.`,
+    usage,
+  );
+}
+
 function preflightUnknownFlags(argv: string[], spec: CommandSpec): void {
   const declared = new Set(Object.keys(spec.flags ?? {}));
   for (const token of argv) {
@@ -238,10 +285,14 @@ export function parseCommand(spec: CommandSpec, argv: string[]): Args {
 
   preflightUnknownFlags(argv, spec);
 
-  const options: Record<string, { type: 'boolean' | 'string' }> = {};
+  const options: Record<
+    string,
+    { type: 'boolean' | 'string'; multiple?: true }
+  > = {};
   for (const [flag, flagSpec] of Object.entries(spec.flags ?? {})) {
     options[flag] = {
       type: flagSpec.type === 'boolean' ? 'boolean' : 'string',
+      ...(flagSpec.multiple ? { multiple: true as const } : {}),
     };
   }
 
@@ -265,10 +316,24 @@ export function parseCommand(spec: CommandSpec, argv: string[]): Args {
     if (raw === undefined) {
       continue;
     }
-    flags[flag] =
-      flagSpec.type === 'number'
-        ? coerceNumber(String(raw), flag, flagSpec, spec.usage)
-        : (raw as FlagValue);
+    if (flagSpec.multiple) {
+      // Repeated occurrences, each also comma-splittable.
+      const values = (raw as string[])
+        .flatMap((v) => String(v).split(','))
+        .map((v) => v.trim())
+        .filter((v) => v.length > 0);
+      for (const value of values) {
+        checkChoice(value, flag, flagSpec, spec.usage);
+      }
+      flags[flag] = values;
+      continue;
+    }
+    if (flagSpec.type === 'number') {
+      flags[flag] = coerceNumber(String(raw), flag, flagSpec, spec.usage);
+      continue;
+    }
+    checkChoice(String(raw), flag, flagSpec, spec.usage);
+    flags[flag] = raw as FlagValue;
   }
 
   const positionals = bindPositionals(parsed.positionals, spec);

@@ -20,29 +20,67 @@ import type {
 } from '../types/issues.js';
 
 export interface IssuesListParams {
-  /** Filter by status: `open` or `closed`. */
+  /** Filter by status: `open` or `closed`. Omit for any state. */
   status?: string;
-  /** Filter by kind: `bug`, `idea`, or `task`. */
-  kind?: string;
+  /** Match issues carrying ANY of these labels. */
+  labels?: string[];
+  /** Only issues another app filed here, by that app's id. */
+  originAppId?: string;
   /** Max issues to return (default 50). */
   limit?: number;
   /** Keyset cursor from a previous response's `nextCursor`. */
   cursor?: string;
 }
 
+// The wire names the list routes read. `labels` is sent as a repeated `label`
+// param, so the mapping is explicit rather than a field rename away from
+// silently dropping the filter.
+function listQuery(params: IssuesListParams): string {
+  return qs({
+    status: params.status,
+    label: params.labels,
+    originAppId: params.originAppId,
+    limit: params.limit,
+    cursor: params.cursor,
+  });
+}
+
 /**
- * List issues newest-first.
+ * List the issues filed IN an app, newest-first.
  *
  * @throws AdminApiError `invalid_status` (400) — status is not `open` or
- *   `closed`; `invalid_kind` (400) — kind is not `bug`, `idea`, or `task`.
+ *   `closed`.
  * @example
- * const { issues } = await admin.issues.list({ status: 'open', kind: 'bug' });
+ * const { issues } = await admin.issues.list({ status: 'open', labels: ['bug'] });
  */
 export function list(ctx: AdminContext, params: IssuesListParams = {}) {
   return call<IssuesListResult>(
     ctx,
     'GET',
-    `/_internal/v2/apps/${ctx.appId}/issues${qs(params as Record<string, string | number | boolean | undefined | null>)}`,
+    `/_internal/v2/apps/${ctx.appId}/issues${listQuery(params)}`,
+  );
+}
+
+/**
+ * List the issues this app filed INTO other apps, newest-first.
+ *
+ * The sender's half of a cross-app thread: one call returns every issue the
+ * app sent out, so a fan-out across forty apps is read once rather than forty
+ * times. Scoped to apps in the same workspace.
+ *
+ * @throws AdminApiError `invalid_status` (400) — status is not `open` or
+ *   `closed`.
+ * @example
+ * const { issues } = await admin.issues.filed({ status: 'open' });
+ */
+export function filed(
+  ctx: AdminContext,
+  params: Omit<IssuesListParams, 'originAppId'> = {},
+) {
+  return call<IssuesListResult>(
+    ctx,
+    'GET',
+    `/_internal/v2/apps/${ctx.appId}/issues/filed${listQuery(params)}`,
   );
 }
 
@@ -69,8 +107,14 @@ export interface IssuesCreateParams {
   title: string;
   /** Issue body in markdown. */
   body?: string;
-  /** Issue kind: `bug`, `idea`, or `task` (default `bug`). */
-  kind?: string;
+  /** Labels to file it under. Open set, at most 20, 64 chars each. */
+  labels?: string[];
+  /**
+   * The app filing this, when it isn't the app the issue lands in. Set it when
+   * targeting another app (`forApp`) so the thread records who wrote — the
+   * recipient's reply comes back as a comment on this same issue.
+   */
+  originAppId?: string;
 }
 
 /**
@@ -82,9 +126,10 @@ export interface IssuesCreateParams {
  * not accept `source`, so `deduped` is always absent from op-layer responses.
  *
  * @throws AdminApiError `missing_title` (400) — title is required or empty;
- *   `invalid_kind` (400) — kind is not `bug`, `idea`, or `task`.
+ *   `invalid_labels` (400) — labels are not strings, or exceed the count /
+ *   length caps; `invalid_origin_app_id` (400) — originAppId is not an app id.
  * @example
- * const { issue } = await admin.issues.create({ title: 'Checkout 500s on empty cart', kind: 'bug' });
+ * const { issue } = await admin.issues.create({ title: 'Checkout 500s on empty cart', labels: ['bug'] });
  */
 export function create(ctx: AdminContext, params: IssuesCreateParams) {
   const requestBody: Record<string, unknown> = {
@@ -94,8 +139,11 @@ export function create(ctx: AdminContext, params: IssuesCreateParams) {
   if (params.body !== undefined) {
     requestBody.body = params.body;
   }
-  if (params.kind !== undefined) {
-    requestBody.kind = params.kind;
+  if (params.labels !== undefined) {
+    requestBody.labels = params.labels;
+  }
+  if (params.originAppId !== undefined) {
+    requestBody.originAppId = params.originAppId;
   }
   return call<IssuesCreateResult>(
     ctx,
@@ -125,22 +173,32 @@ export function comment(ctx: AdminContext, number: string, body: string) {
 }
 
 /**
- * Close an issue.
+ * Close an issue, optionally with a closing comment.
  *
- * Records a `closed` timeline event on the thread.
+ * Records a `closed` timeline event on the thread, preceded by the comment
+ * when one is given — so answering and resolving is one call, which is what
+ * replying to an issue another app filed usually amounts to.
  *
  * @param number The issue number.
+ * @param comment Optional prose posted before the close event.
  * @throws AdminApiError `issue_not_found` (404) — no issue with this number
  *   in this app.
  * @example
- * await admin.issues.close('42');
+ * await admin.issues.close('42', 'Already fixed in v3 — no change needed.');
  */
-export function close(ctx: AdminContext, number: string) {
+export function close(ctx: AdminContext, number: string, comment?: string) {
+  const requestBody: Record<string, unknown> = {
+    status: 'closed',
+    authorKind: 'agent',
+  };
+  if (comment !== undefined) {
+    requestBody.comment = comment;
+  }
   return call<IssuesUpdateResult>(
     ctx,
     'POST',
     `/_internal/v2/apps/${ctx.appId}/issues/${seg(number)}/update`,
-    { status: 'closed', authorKind: 'agent' },
+    requestBody,
   );
 }
 
@@ -169,24 +227,24 @@ export interface IssuesEditParams {
   title?: string;
   /** Replace the issue's body. */
   body?: string;
-  /** Change the kind to `bug`, `idea`, or `task`. */
-  kind?: string;
+  /** Replace the issue's labels wholesale (not a merge). */
+  labels?: string[];
   /** Change the status to `open` or `closed`. */
   status?: string;
 }
 
 /**
- * Edit an issue's title, body, kind, or status.
+ * Edit an issue's title, body, labels, or status.
  *
  * Status transitions record a `closed` or `reopened` timeline event
  * automatically.  At least one field must be provided.
  *
  * @param number The issue number.
  * @throws AdminApiError `missing_title` (400) — title was supplied but empty;
- *   `invalid_kind` (400) — kind is not `bug`, `idea`, or `task`;
- *   `invalid_status` (400) — status is not `open` or `closed`; `no_fields`
- *   (400) — no editable field was provided; `issue_not_found` (404) — no
- *   issue with this number in this app.
+ *   `invalid_labels` (400) — labels are not strings, or exceed the count /
+ *   length caps; `invalid_status` (400) — status is not `open` or `closed`;
+ *   `no_fields` (400) — no editable field was provided; `issue_not_found`
+ *   (404) — no issue with this number in this app.
  * @example
  * await admin.issues.edit('42', { status: 'closed' });
  */
@@ -202,8 +260,8 @@ export function edit(
   if (params.body !== undefined) {
     requestBody.body = params.body;
   }
-  if (params.kind !== undefined) {
-    requestBody.kind = params.kind;
+  if (params.labels !== undefined) {
+    requestBody.labels = params.labels;
   }
   if (params.status !== undefined) {
     requestBody.status = params.status;

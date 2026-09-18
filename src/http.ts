@@ -58,6 +58,14 @@ export function qs(params: object): string {
     if (value === undefined || value === null) {
       continue;
     }
+    // An array repeats the key (`?label=a&label=b`) rather than joining with a
+    // comma, which is the form express parses back into an array.
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        search.append(key, String(entry));
+      }
+      continue;
+    }
     search.set(key, String(value));
   }
   const text = search.toString();
