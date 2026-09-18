@@ -17,6 +17,18 @@ export interface AdminContext {
   apiKey: string;
   /** The app every operation is scoped to. */
   appId: string;
+  /**
+   * Who is acting, when that is not `appId` itself — set only when the caller
+   * has retargeted at another app (`--app`, or `forApp()`), and carrying the
+   * app they came FROM.
+   *
+   * Writes that record authorship attach it, so a cross-app issue says which
+   * app filed it without the caller having to remember a second flag. That
+   * matters more than it sounds: the information was always available here and
+   * being optional at the call site is precisely how it came to be omitted
+   * everywhere.
+   */
+  originAppId?: string;
   /** API origin, no trailing slash. */
   baseUrl: string;
 }

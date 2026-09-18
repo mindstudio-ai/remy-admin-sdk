@@ -52,9 +52,26 @@ async function main() {
   // run outside a workspace, where loadWorkspaceAppId() throws — hence the
   // short-circuit rather than `?? loadWorkspaceAppId()`.
   const appIdOverride = a.str('app');
+  // Retargeting at another app makes THIS workspace's app the actor, so writes
+  // can record who filed. Resolved here rather than at the call site because
+  // this is the only place that knows both ends. Outside a workspace there is
+  // no origin to claim, and no `--app` means we are not acting on anyone's
+  // behalf but our own — both leave it undefined.
+  let originAppId: string | undefined;
+  if (appIdOverride) {
+    try {
+      const workspaceAppId = loadWorkspaceAppId();
+      if (workspaceAppId !== appIdOverride) {
+        originAppId = workspaceAppId;
+      }
+    } catch {
+      // No workspace (a laptop, CI) — `--app` is the only app in play.
+    }
+  }
   const ctx = {
     apiKey,
     appId: appIdOverride ?? loadWorkspaceAppId(),
+    originAppId,
     baseUrl: process.env['API_BASE_URL'] || DEFAULT_BASE_URL,
   };
 
