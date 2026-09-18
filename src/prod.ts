@@ -46,9 +46,15 @@ async function main() {
   if (!apiKey) {
     fatal('MINDSTUDIO_API_KEY environment variable is not set');
   }
+  // `--app` targets another app in the workspace. Read generically: `str` on a
+  // flag the command didn't declare returns undefined, so only the commands
+  // that spread in APP can actually be redirected. It is also the one way to
+  // run outside a workspace, where loadWorkspaceAppId() throws — hence the
+  // short-circuit rather than `?? loadWorkspaceAppId()`.
+  const appIdOverride = a.str('app');
   const ctx = {
     apiKey,
-    appId: loadWorkspaceAppId(),
+    appId: appIdOverride ?? loadWorkspaceAppId(),
     baseUrl: process.env['API_BASE_URL'] || DEFAULT_BASE_URL,
   };
 

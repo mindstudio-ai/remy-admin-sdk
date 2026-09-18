@@ -11,17 +11,18 @@
 // Value types
 // ---------------------------------------------------------------------------
 
-export type IssueKind = 'bug' | 'idea' | 'task';
 export type IssueStatus = 'open' | 'closed';
 
 /**
- * 'user' = workspace member; 'agent' = Remy agent;
- * 'system' = server-set activity events; 'sdk' = end-user report.
+ * 'user' = workspace member; 'agent' = Remy agent; 'app' = another app's
+ * backend; 'system' = server-set activity events; 'sdk' = end-user report.
+ *
+ * Authorship is this × `originAppId`: 'agent' with an origin is another app's
+ * agent, 'app' with an origin is its backend, 'agent' alone is the app's own.
  */
-export type IssueAuthorKind = 'user' | 'agent' | 'system' | 'sdk';
+export type IssueAuthorKind = 'user' | 'agent' | 'system' | 'sdk' | 'app';
 
-export type IssueEventType =
-  'closed' | 'reopened' | 'triage_started' | 'triage_failed';
+export type IssueEventType = 'closed' | 'reopened';
 
 // ---------------------------------------------------------------------------
 // Row types
@@ -35,21 +36,21 @@ export interface IssueRow {
   number: number;
   title: string;
   body: string;
-  kind: IssueKind;
+  /** Open label set. Replaced the closed bug/idea/task `kind` enum. */
+  labels: string[];
   status: IssueStatus;
   authorKind: IssueAuthorKind;
   authorUserId: string | null;
+  /** The app that filed this, when another app did; null otherwise. */
+  originAppId: string | null;
   /** Free-form reporter label for 'sdk'-authored (end-user) reports; null otherwise. */
   reporter: string | null;
   releaseId: string | null;
   commitSha: string | null;
   /** Full source blob for error/crash-linked issues (e.g. { kind, key, releaseId }). */
   linkedSignal: unknown | null;
-  /** Namespaced grouping key (`<kind>:<key>`) used for open-issue dedup. */
+  /** Namespaced grouping key (`<sourceKind>:<key>`) used for open-issue dedup. */
   sourceKey: string | null;
-  /** Triage enrichment payload; null until enrichmentStatus is 'ready'. */
-  enrichment: unknown | null;
-  enrichmentStatus: string;
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;
@@ -69,7 +70,9 @@ export interface IssueCommentRow {
   body: string;
   authorKind: IssueAuthorKind;
   authorUserId: string | null;
-  /** Agent receipt blob (cost / tool trail / timing); null for human/SDK rows. */
+  /** The app that wrote this entry, when another app did; null otherwise. */
+  originAppId: string | null;
+  /** Free-form blob an agent-authored entry may carry; null otherwise. */
   metadata: unknown | null;
   createdAt: string;
   updatedAt: string;
@@ -79,7 +82,10 @@ export interface IssueCommentRow {
 // Result types per command
 // ---------------------------------------------------------------------------
 
-/** issues list → GET /_internal/v2/apps/:appId/issues */
+/**
+ * issues list  → GET /_internal/v2/apps/:appId/issues
+ * issues filed → GET /_internal/v2/apps/:appId/issues/filed
+ */
 export interface IssuesListResult {
   issues: IssueRow[];
   /** Opaque keyset cursor; pass as ?cursor= to fetch the next page. */

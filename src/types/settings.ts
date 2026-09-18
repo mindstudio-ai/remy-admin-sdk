@@ -63,11 +63,6 @@ export interface V2AppSettings {
    * (e.g. 'https://app.acme.com'). Capped at 25 entries.
    */
   additionalFrameAncestors?: string[];
-
-  /**
-   * When true, auto-run the read-only triage agent on new bug issues. Default false.
-   */
-  autoTriageIssues?: boolean;
 }
 
 /**

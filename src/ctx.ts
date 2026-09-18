@@ -51,17 +51,3 @@ export function loadWorkspaceAppId(workspaceDir = WORKSPACE_DIR): string {
   }
   return result.value.appId;
 }
-
-/**
- * Build a context from the environment — the CLI's configuration model, also
- * used by the lazy default client. `apiKey` presence is NOT checked here so
- * the CLI can keep its historical error ordering (routing and argument errors
- * report before "MINDSTUDIO_API_KEY is not set").
- */
-export function resolveEnvContext(): AdminContext {
-  return {
-    apiKey: process.env['MINDSTUDIO_API_KEY'] ?? '',
-    appId: loadWorkspaceAppId(),
-    baseUrl: process.env['API_BASE_URL'] || DEFAULT_BASE_URL,
-  };
-}
