@@ -99,9 +99,23 @@ function buildClient(ctx: AdminContext) {
   return {
     /** The resolved context this client is bound to. */
     context: ctx as Readonly<AdminContext>,
-    /** A sibling client for another app, sharing credentials. */
+    /**
+     * A sibling client for another app, sharing credentials.
+     *
+     * The app we came from becomes the origin, so a write through the returned
+     * client records which app acted — the same rule the CLI's `--app` follows.
+     * Chaining `forApp` twice keeps the FIRST app as the origin, since that is
+     * the one whose workspace this code is running in.
+     */
     forApp(appId: string) {
-      return buildClient({ ...ctx, appId });
+      return buildClient({
+        ...ctx,
+        appId,
+        originAppId:
+          appId === ctx.appId
+            ? ctx.originAppId
+            : (ctx.originAppId ?? ctx.appId),
+      });
     },
 
     agent: bindOps(agent, ctx),

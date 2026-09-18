@@ -19,6 +19,13 @@ import type {
   IssuesDeleteResult,
 } from '../types/issues.js';
 
+// The origin the API should credit for an entry this client writes, as a
+// spreadable fragment. Empty when the client is acting as the app it is pointed
+// at, which is the ordinary case and the one the API reads as "my own agent".
+function authorship(ctx: AdminContext): { originAppId?: string } {
+  return ctx.originAppId ? { originAppId: ctx.originAppId } : {};
+}
+
 export interface IssuesListParams {
   /** Filter by status: `open` or `closed`. Omit for any state. */
   status?: string;
@@ -110,9 +117,10 @@ export interface IssuesCreateParams {
   /** Labels to file it under. Open set, at most 20, 64 chars each. */
   labels?: string[];
   /**
-   * The app filing this, when it isn't the app the issue lands in. Set it when
-   * targeting another app (`forApp`) so the thread records who wrote — the
-   * recipient's reply comes back as a comment on this same issue.
+   * The app filing this, when it isn't the app the issue lands in. Defaults to
+   * `ctx.originAppId` — set whenever the caller retargeted at another app — so
+   * cross-app authorship is recorded without anyone opting in. Pass it
+   * explicitly only to override that.
    */
   originAppId?: string;
 }
@@ -142,8 +150,9 @@ export function create(ctx: AdminContext, params: IssuesCreateParams) {
   if (params.labels !== undefined) {
     requestBody.labels = params.labels;
   }
-  if (params.originAppId !== undefined) {
-    requestBody.originAppId = params.originAppId;
+  const originAppId = params.originAppId ?? ctx.originAppId;
+  if (originAppId !== undefined) {
+    requestBody.originAppId = originAppId;
   }
   return call<IssuesCreateResult>(
     ctx,
@@ -168,7 +177,7 @@ export function comment(ctx: AdminContext, number: string, body: string) {
     ctx,
     'POST',
     `/_internal/v2/apps/${ctx.appId}/issues/${seg(number)}/comments`,
-    { body, authorKind: 'agent' },
+    { body, authorKind: 'agent', ...authorship(ctx) },
   );
 }
 
@@ -190,6 +199,7 @@ export function close(ctx: AdminContext, number: string, comment?: string) {
   const requestBody: Record<string, unknown> = {
     status: 'closed',
     authorKind: 'agent',
+    ...authorship(ctx),
   };
   if (comment !== undefined) {
     requestBody.comment = comment;
@@ -218,7 +228,7 @@ export function reopen(ctx: AdminContext, number: string) {
     ctx,
     'POST',
     `/_internal/v2/apps/${ctx.appId}/issues/${seg(number)}/update`,
-    { status: 'open', authorKind: 'agent' },
+    { status: 'open', authorKind: 'agent', ...authorship(ctx) },
   );
 }
 
@@ -253,7 +263,10 @@ export function edit(
   number: string,
   params: IssuesEditParams,
 ) {
-  const requestBody: Record<string, unknown> = { authorKind: 'agent' };
+  const requestBody: Record<string, unknown> = {
+    authorKind: 'agent',
+    ...authorship(ctx),
+  };
   if (params.title !== undefined) {
     requestBody.title = params.title;
   }
