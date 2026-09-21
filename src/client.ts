@@ -36,6 +36,7 @@ import * as issues from './ops/issues.js';
 import * as jewels from './ops/jewels.js';
 import * as methods from './ops/methods.js';
 import * as prerender from './ops/prerender.js';
+import * as qaRecordings from './ops/qaRecordings.js';
 import * as releases from './ops/releases.js';
 import * as requests from './ops/requests.js';
 import * as secrets from './ops/secrets.js';
@@ -162,6 +163,7 @@ function buildClient(ctx: AdminContext) {
     jewels: bindOps(jewels, ctx),
     methods: bindOps(methods, ctx),
     prerender: bindOps(prerender, ctx),
+    qaRecordings: bindOps(qaRecordings, ctx),
     releases: bindOps(releases, ctx),
     requests: bindOps(requests, ctx),
     secrets: bindOps(secrets, ctx),

@@ -14,29 +14,30 @@ const HELP = `remy-admin — Manage your production Remy app.
 Usage: remy-admin <command> <subcommand> [options]
 
 Commands:
-  requests    View request logs and metrics
-  crashes     View frontend (browser) crash groups and events
-  analytics   View traffic, top-N, geo, and AI-referral insights
-  releases    View and monitor releases
-  diagnostics View the post-deploy Lighthouse audit (scores, issues, raw report)
-  domains     Manage custom subdomain
-  users       Manage app users and roles
-  db          Query the production database
-  secrets     Manage app secrets (env vars)
-  methods     List and invoke methods
-  data        Sync databases between dev and live (lift-from-dev / lift-from-live)
-  issues      File and manage issues, in this app or another app in the workspace
-  prerender   Manage + verify prerendered snapshots served to bots/crawlers
-  files       Store, retrieve, share (signed links) + manage files in the app's stores
-  datasources Build and query searchable document corpora (RAG)
-  voice       Phone numbers, voice call log + transcripts, voice policy settings
-  agent       Agent (chat) conversation log + transcripts
-  events      Realtime events — live tail, test publish, channel activity
-  jewels      Monitor jewel shadowing; review + approve the proposal queue
-  settings    App settings — signup allowlist, test accounts, embed origins, toggles
-  email       Email — delivery log, blast stats, unsubscribes, inbox, custom domains
-  cron        Scheduled jobs — schedules, run history, manual trigger
-  infra       Dedicated infrastructure — provision, hibernate, resize + destroy retrieval capacity
+  requests      View request logs and metrics
+  crashes       View frontend (browser) crash groups and events
+  analytics     View traffic, top-N, geo, and AI-referral insights
+  releases      View and monitor releases
+  diagnostics   View the post-deploy Lighthouse audit (scores, issues, raw report)
+  domains       Manage custom subdomain
+  users         Manage app users and roles
+  db            Query the production database
+  secrets       Manage app secrets (env vars)
+  methods       List and invoke methods
+  data          Sync databases between dev and live (lift-from-dev / lift-from-live)
+  issues        File and manage issues, in this app or another app in the workspace
+  prerender     Manage + verify prerendered snapshots served to bots/crawlers
+  files         Store, retrieve, share (signed links) + manage files in the app's stores
+  datasources   Build and query searchable document corpora (RAG)
+  voice         Phone numbers, voice call log + transcripts, voice policy settings
+  agent         Agent (chat) conversation log + transcripts
+  events        Realtime events — live tail, test publish, channel activity
+  jewels        Monitor jewel shadowing; review + approve the proposal queue
+  settings      App settings — signup allowlist, test accounts, embed origins, toggles
+  email         Email — delivery log, blast stats, unsubscribes, inbox, custom domains
+  cron          Scheduled jobs — schedules, run history, manual trigger
+  infra         Dedicated infrastructure — provision, hibernate, resize + destroy retrieval capacity
+  qa-recordings Browser-QA session replays — list them, render one as an mp4
 
 Run 'remy-admin <command> --help' for details on each command.
 
@@ -71,6 +72,7 @@ const GROUPS = [
   'email',
   'cron',
   'infra',
+  'qa-recordings',
 ] as const;
 
 type Route = { key: CommandKey; argv: string[] };

@@ -1,6 +1,6 @@
 # @madewithremy/admin
 
-Admin SDK + CLI for managing production Remy apps: request logs, analytics, releases, users, secrets, database, files, email (including custom sending/receiving domains), scheduled jobs, and more. Every operation wraps the same management API the dashboard uses, so anything answerable in the console is answerable here — from the terminal or from code.
+Admin SDK + CLI for managing production Remy apps: request logs, analytics, releases, users, secrets, database, files, email (including custom sending/receiving domains), scheduled jobs, QA replays, and more. Almost every operation wraps the same management API the dashboard uses, so anything answerable in the console is answerable here — from the terminal or from code. The exception is `qa-recordings export`, which renders a video on the dev box and therefore only runs inside a sandbox.
 
 One surface, two skins: every CLI command (`remy-admin <group> <sub>`) is also a typed client method (`admin.<group>.<sub>()`). Both are thin layers over the same ops core.
 
@@ -28,6 +28,7 @@ Configuration is read from the environment and the workspace — there are no co
 | `API_BASE_URL` | API origin (default `https://api.mindstudio.ai`) |
 | `WORKSPACE_DIR` | Workspace root (default `/home/vercel-sandbox/workspace`) |
 | `${WORKSPACE_DIR}/mindstudio.json` | `appId` — which app the CLI manages |
+| `REMY_SIDECAR_URL` | Sandbox sidecar for `qa-recordings export` (default `http://127.0.0.1:4388`) |
 
 ## Import layer
 

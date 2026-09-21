@@ -1,6 +1,6 @@
 {
   "name": "@madewithremy/admin",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "description": "Admin SDK + CLI for managing production Remy apps",
   "type": "module",
   "main": "./dist/index.js",
@@ -21,9 +21,11 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "npm run tsc -- --noEmit",
     "lint:fix": "prettier --write ./src",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "tsc": "node node_modules/@typescript/native/bin/tsc",
+    "//tsc": "The native TypeScript 7 compiler by explicit path. It (typescript@7 under the @typescript/native alias) and the JS compiler API behind the `typescript` alias — which tsup's dts step needs — both declare a `tsc` bin, so node_modules/.bin/tsc is whichever npm linked last."
   },
   "engines": {
     "node": ">=22.0.0"
@@ -53,9 +55,10 @@
   },
   "devDependencies": {
     "@types/node": "^25.3.2",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "prettier": "^3.8.1",
     "tsup": "^8",
     "tsx": "^4",
-    "typescript": "^5.5"
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
   }
 }
