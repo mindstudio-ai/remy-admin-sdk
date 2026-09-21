@@ -61,6 +61,11 @@ import { settingsHandlers, settingsHelp, settingsSpecs } from './settings.js';
 import { emailHandlers, emailHelp, emailSpecs } from './email.js';
 import { cronHandlers, cronHelp, cronSpecs } from './cron.js';
 import { infraHandlers, infraHelp, infraSpecs } from './infra.js';
+import {
+  qaRecordingsHandlers,
+  qaRecordingsHelp,
+  qaRecordingsSpecs,
+} from './qaRecordings.js';
 
 export const SPECS = {
   ...requestsSpecs,
@@ -90,6 +95,7 @@ export const SPECS = {
   ...emailSpecs,
   ...cronSpecs,
   ...infraSpecs,
+  ...qaRecordingsSpecs,
 };
 
 export type CommandKey = keyof typeof SPECS;
@@ -122,6 +128,7 @@ export const HANDLERS = {
   ...emailHandlers,
   ...cronHandlers,
   ...infraHandlers,
+  ...qaRecordingsHandlers,
 };
 
 /**
@@ -157,4 +164,5 @@ export const GROUP_HELP: Record<string, string> = {
   email: emailHelp,
   cron: cronHelp,
   infra: infraHelp,
+  'qa-recordings': qaRecordingsHelp,
 };
