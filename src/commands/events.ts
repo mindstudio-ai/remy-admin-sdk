@@ -26,7 +26,8 @@ export const eventsSpecs = {
   'events publish': {
     usage:
       'Usage: remy-admin events publish <channel> <json> [--scope live]\n' +
-      "Publishes exactly as the app's own events.publish would — same validation, delivery, and metering.",
+      "Publishes exactly as the app's own events.publish would — same validation, delivery, and metering. " +
+      'Goes to your own dev session unless --scope says otherwise; --scope live reaches real users.',
     positionals: [
       { name: 'channel', required: true },
       { name: 'json', required: true },
@@ -118,15 +119,18 @@ Notes:
   run from a script.
 
   publish lets a frontend subscriber be verified before the backend trigger
-  exists. The response's 'delivered' counts live subscriber connections per
-  published channel — 0 means nobody is listening right now, which is normal,
-  not an error.
+  exists. It goes to YOUR dev session by default (the preview you're building
+  in); pass --scope live to reach real users' browsers. The response's
+  'scope' says where it went, and 'delivered' counts live subscriber
+  connections per published channel — 0 means nobody is listening right now,
+  which is normal, not an error.
 
   channels list is the mismatch-finder: a channel with subscribers but no
   recent publish (or the reverse) usually means the frontend and backend spell
   the channel differently. Window is 24h; channels are exact strings — there
   are no wildcards anywhere in app events.
 
-  Scopes: events never cross execution environments. --scope defaults to
-  'live'; use 'dev:<devSessionId>' to inspect a tunnel session's world or
-  'preview:<releaseId>' for a branch preview.`;
+  Scopes: events never cross execution environments. tail and channels list
+  default to 'live', publish to your own dev session; use
+  'dev:<devSessionId>' for a dev session's world (a publish prints its own)
+  or 'preview:<releaseId>' for a branch preview.`;

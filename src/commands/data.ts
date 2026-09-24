@@ -22,9 +22,8 @@ export const dataSpecs = {
       "replaces the live release's databases with a snapshot of dev. Wipes any " +
       'rows live had — including signed-up users. Intended for first-publish / ' +
       'pre-launch data sync only.\n' +
-      '--release-id names which of your dev workspaces to lift from, and is ' +
-      'required only when you have more than one open (a box and a laptop CLI). ' +
-      'The ambiguity error lists the ids.',
+      '--release-id names the dev release to lift from; without it, your dev ' +
+      'workspace in this app.',
     positionals: [{ name: 'appId', required: true }],
     flags: { confirm: { type: 'boolean' }, 'release-id': { type: 'string' } },
     requireAnyOf: {
@@ -39,8 +38,8 @@ export const dataSpecs = {
       "dev release's databases with a snapshot of live (wiping local dev " +
       'data). Live/prod data is never touched. With --truncate it instead ' +
       'empties the dev databases (keeps schema, no data pulled from live).\n' +
-      '--release-id names which of your dev workspaces to overwrite, and is ' +
-      'required only when you have more than one open.',
+      '--release-id names the dev release to overwrite; without it, your dev ' +
+      'workspace in this app.',
     flags: {
       truncate: { type: 'boolean' },
       confirm: { type: 'boolean' },
