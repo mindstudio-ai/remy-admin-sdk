@@ -275,11 +275,13 @@ Today the one kind is dedicated retrieval: the app's own vector-store capacity
 for data sources, isolated from the shared pool. Sizes and prices come from the
 platform catalog (\`infra list\` prints them); nothing is priced client-side.
 
-A resource bills by the hour from activation, at the retained-storage rate while
-hibernated, and not at all once destroyed. Provisioning (and growing) needs a
-month's worth of credits available in the workspace, checked before the request
-is accepted; nothing is charged until activation. The provision output prints
-the price it committed to. Every action below is audited.
+A resource bills by the clock hour at the active rate for every hour it is
+active in, including the hour a resume lands in, and costs nothing while
+hibernated or once destroyed. Provisioning, growing and resuming need a month's
+worth of credits available in the workspace, checked before the request is
+accepted (insufficient_credits); nothing is charged until activation. The
+provision output prints the price it committed to. Every action below is
+audited.
 
 Subcommands:
   list        Resources on this app, plus the offerings you can provision
@@ -287,7 +289,7 @@ Subcommands:
   logs        The platform's log for a resource (--follow to keep reading)
   provision   Lease a new resource (needs a month's credits; prints the price)
   hibernate   Park it: data kept, searches paused, compute charge stops
-  resume      Bring a hibernated resource back
+  resume      Bring a hibernated resource back (needs a month's credits)
   resize      Change its size, data intact (passes through hibernated)
   destroy     Delete it (refused while data sources are placed on it)
   rename      Change the display name

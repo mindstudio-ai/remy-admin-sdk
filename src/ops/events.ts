@@ -15,9 +15,10 @@ import type {
 
 export interface EventsScopeParams {
   /**
-   * Environment scope to inspect: `live` (default), `preview:<releaseId>`,
-   * or `dev:<sessionId>` — publishes and subscriptions never cross scopes,
-   * so a tunnel session's events are visible only under its `dev:` scope.
+   * Environment scope to inspect: `live` (the default for reads),
+   * `preview:<releaseId>`, or `dev:<sessionId>` — publishes and subscriptions
+   * never cross scopes, so a dev session's events are visible only under its
+   * `dev:` scope. A publish without one goes to the caller's own dev session.
    */
   scope?: string;
 }
@@ -25,7 +26,7 @@ export interface EventsScopeParams {
 export interface EventsPublishParams extends EventsScopeParams {
   /** Exact channel name(s) — no wildcards anywhere in app events. */
   channels: string | string[];
-  /** The payload subscribers receive (≤32k serialized characters). */
+  /** The payload subscribers receive (≤256k serialized characters). */
   data: unknown;
 }
 
@@ -57,10 +58,13 @@ export function channelsList(
  * same validation, same delivery, same metering. Lets a frontend subscriber
  * be verified before the backend trigger exists.
  *
- * `delivered` counts live subscriber connections per published channel;
- * `0` is normal (nobody listening), never an error.
+ * Without `scope` it goes to the caller's own dev session, the preview they
+ * are building in; `scope: 'live'` reaches real users. The result's `scope`
+ * says where it went. `delivered` counts live subscriber connections per
+ * published channel; `0` is normal (nobody listening), never an error.
  *
- * @throws AdminApiError `invalid_channels` / `payload_too_large` (400).
+ * @throws AdminApiError `invalid_channels` / `payload_too_large` (400), and
+ *   `no_dev_session` (400) with no `scope` when the caller has no dev session.
  * @example
  * const { delivered } = await admin.events.publish({
  *   channels: 'jobs:usr_123',
